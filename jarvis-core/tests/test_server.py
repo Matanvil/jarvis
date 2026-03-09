@@ -312,10 +312,11 @@ def test_telegram_away_endpoint_sets_false(client):
 def test_hotkey_command_while_away_auto_disables(client):
     telegram_state.get_state().away = True
     telegram_state.get_state().chat_id = 12345
-    with patch("server.notify", new_callable=AsyncMock):
+    with patch("server.notify", new_callable=AsyncMock) as mock_notify:
         resp = client.post("/command", json={"text": "list files", "source": "hotkey"})
     assert resp.status_code == 200
     assert telegram_state.get_state().away is False
+    mock_notify.assert_awaited_once_with("🟢 Jarvis back at the Mac — away mode off")
 
 
 def test_telegram_command_does_not_disable_away(client):

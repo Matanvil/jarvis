@@ -16,6 +16,7 @@ from guardrails import Guardrails
 from router import Router
 from telegram_bot import start_bot, stop_bot
 from notifications import notify
+import telegram_state
 
 _pipeline = None
 _loggers = None
@@ -100,7 +101,7 @@ def reset_conversation():
 
 
 @app.post("/command")
-def command(req: CommandRequest):
+async def command(req: CommandRequest):
     import anthropic as _anthropic
     start = time.time()
     try:
@@ -115,16 +116,10 @@ def command(req: CommandRequest):
         return {"speak": msg, "display": msg, "steps": []}
     # Auto-disable away mode if command came from the Mac (not Telegram)
     if req.source != "telegram":
-        from telegram_state import get_state
-        state = get_state()
+        state = telegram_state.get_state()
         if state.away:
             state.away = False
-            import asyncio
-            try:
-                loop = asyncio.get_event_loop()
-                loop.create_task(notify("🟢 Jarvis back at the Mac — away mode off"))
-            except RuntimeError:
-                pass  # no event loop available (e.g. test context without running loop)
+            await notify("🟢 Jarvis back at the Mac — away mode off")
     duration_ms = int((time.time() - start) * 1000)
     if _loggers:
         _loggers["commands"].info(
