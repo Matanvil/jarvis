@@ -42,7 +42,11 @@ def test_reset_state():
     s = telegram_state.get_state()
     s.away = True
     s.chat_id = 999
+    s.pending_command = "delete something"
+    s.pending_tool_use_id = "tool_xyz"
     telegram_state.reset_state()
     s2 = telegram_state.get_state()
     assert s2.away is False
     assert s2.chat_id is None
+    assert s2.pending_command is None
+    assert s2.pending_tool_use_id is None
