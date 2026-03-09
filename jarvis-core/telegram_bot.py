@@ -32,13 +32,17 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     state = get_state()
     state.chat_id = update.effective_chat.id
     await context.bot.send_chat_action(chat_id=state.chat_id, action="typing")
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{_SERVER_URL}/command",
-            json={"text": update.message.text, "source": "telegram"},
-            timeout=60.0,
-        )
-        data = resp.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{_SERVER_URL}/command",
+                json={"text": update.message.text, "source": "telegram"},
+                timeout=60.0,
+            )
+            data = resp.json()
+    except (httpx.RequestError, httpx.TimeoutException):
+        await update.message.reply_text("Server unavailable — is Jarvis running?")
+        return
     if data.get("approval_required"):
         state.pending_command = update.message.text
         state.pending_tool_use_id = data.get("tool_use_id")
@@ -64,6 +68,7 @@ async def _handle_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not await _validate(update):
         return
     state = get_state()
+    state.chat_id = update.effective_chat.id
     state.away = False
     await update.message.reply_text("Away mode off — see you at the Mac.")
 
@@ -75,26 +80,32 @@ async def _handle_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not state.pending_tool_use_id:
         await update.message.reply_text("Nothing pending approval.")
         return
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            f"{_SERVER_URL}/approve",
-            json={
-                "tool_use_id": state.pending_tool_use_id,
-                "approved": True,
-                "trust_session": False,
-                "category": "",
-            },
-        )
-        resp = await client.post(
-            f"{_SERVER_URL}/command",
-            json={"text": state.pending_command, "source": "telegram"},
-            timeout=60.0,
-        )
-        data = resp.json()
-    state.pending_command = None
-    state.pending_tool_use_id = None
-    reply = data.get("display") or data.get("speak") or data.get("error") or "Done."
-    await update.message.reply_text(reply)
+    tool_use_id = state.pending_tool_use_id
+    pending_cmd = state.pending_command
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{_SERVER_URL}/approve",
+                json={
+                    "tool_use_id": tool_use_id,
+                    "approved": True,
+                    "trust_session": False,
+                    "category": "",
+                },
+            )
+            resp = await client.post(
+                f"{_SERVER_URL}/command",
+                json={"text": pending_cmd, "source": "telegram"},
+                timeout=60.0,
+            )
+            data = resp.json()
+        reply = data.get("display") or data.get("speak") or data.get("error") or "Done."
+        await update.message.reply_text(reply)
+    except (httpx.RequestError, httpx.TimeoutException):
+        await update.message.reply_text("Server unavailable — is Jarvis running?")
+    finally:
+        state.pending_command = None
+        state.pending_tool_use_id = None
 
 
 async def _handle_deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -104,18 +115,23 @@ async def _handle_deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not state.pending_tool_use_id:
         await update.message.reply_text("Nothing pending approval.")
         return
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            f"{_SERVER_URL}/approve",
-            json={
-                "tool_use_id": state.pending_tool_use_id,
-                "approved": False,
-                "trust_session": False,
-                "category": "",
-            },
-        )
-    state.pending_command = None
-    state.pending_tool_use_id = None
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{_SERVER_URL}/approve",
+                json={
+                    "tool_use_id": state.pending_tool_use_id,
+                    "approved": False,
+                    "trust_session": False,
+                    "category": "",
+                },
+            )
+    except (httpx.RequestError, httpx.TimeoutException):
+        await update.message.reply_text("Server unavailable — is Jarvis running?")
+        return
+    finally:
+        state.pending_command = None
+        state.pending_tool_use_id = None
     await update.message.reply_text("Action denied.")
 
 
