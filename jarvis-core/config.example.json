@@ -27,5 +27,9 @@
     "run_shell": "require_approval",
     "network_requests": "allow",
     "system_settings": "require_approval"
+  },
+  "telegram": {
+    "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+    "allowed_user_id": 0
   }
 }

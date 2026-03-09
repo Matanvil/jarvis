@@ -45,6 +45,10 @@ DEFAULTS = {
         "haiku": "claude-haiku-4-5-20251001",
         "sonnet": "claude-sonnet-4-6",
     },
+    "telegram": {
+        "bot_token": "",
+        "allowed_user_id": 0,
+    },
 }
 
 
@@ -73,6 +77,7 @@ def load() -> dict:
         cfg["reasoning"] = {**DEFAULTS["reasoning"], **data.get("reasoning", {})}
         cfg["narration"] = {**DEFAULTS["narration"], **data.get("narration", {})}
         cfg["models"] = {**DEFAULTS["models"], **data.get("models", {})}
+        cfg["telegram"] = {**DEFAULTS["telegram"], **data.get("telegram", {})}
 
     if DEV_CONFIG_PATH.exists():
         with open(DEV_CONFIG_PATH) as f:
@@ -80,6 +85,12 @@ def load() -> dict:
         cfg = _deep_merge(cfg, dev)
 
     return cfg
+
+
+def telegram_configured() -> bool:
+    """Return True only if both bot_token and allowed_user_id are set."""
+    t = load().get("telegram", {})
+    return bool(t.get("bot_token")) and int(t.get("allowed_user_id", 0)) != 0
 
 
 def save(cfg: dict) -> None:
