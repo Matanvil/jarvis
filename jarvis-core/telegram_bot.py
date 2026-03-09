@@ -22,8 +22,11 @@ def get_bot():
 
 
 async def _validate(update: Update) -> bool:
-    allowed = cfg_module.load()["telegram"]["allowed_user_id"]
-    return update.effective_user.id == int(allowed)
+    try:
+        allowed = int(cfg_module.load()["telegram"]["allowed_user_id"])
+    except (ValueError, TypeError):
+        return False
+    return update.effective_user.id == allowed
 
 
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -140,7 +143,11 @@ def create_app() -> Application | None:
     t = conf.get("telegram", {})
     token = t.get("bot_token", "")
     allowed_id = t.get("allowed_user_id", 0)
-    if not token or not int(allowed_id):
+    try:
+        allowed_id_int = int(allowed_id)
+    except (ValueError, TypeError):
+        return None
+    if not token or not allowed_id_int:
         return None
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("away", _handle_away))

@@ -239,13 +239,22 @@ def telegram_away(req: TelegramAwayRequest):
     return {"away": req.away}
 
 
+def _redact_sensitive(obj):
+    """Recursively redact values whose keys end in _key, _secret, or _token."""
+    if not isinstance(obj, dict):
+        return obj
+    return {
+        k: "***" if isinstance(v, str) and (
+            k.endswith("_key") or k.endswith("_secret") or k.endswith("_token")
+        ) else _redact_sensitive(v)
+        for k, v in obj.items()
+    }
+
+
 @app.get("/config")
 def get_config():
     config = cfg_module.load()
-    return {
-        k: "***" if isinstance(v, str) and (k.endswith("_key") or k.endswith("_secret")) else v
-        for k, v in config.items()
-    }
+    return _redact_sensitive(config)
 
 
 def _deep_merge(base: dict, updates: dict) -> dict:

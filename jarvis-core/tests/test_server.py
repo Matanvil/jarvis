@@ -245,6 +245,24 @@ def test_get_config_redacts_api_keys(client_and_agent, tmp_path):
     assert data["server_port"] == 8765
 
 
+def test_get_config_redacts_nested_bot_token(client_and_agent):
+    """GET /config must redact telegram.bot_token (nested sensitive key ending in _token)."""
+    import config as cfg_module
+    with patch.object(cfg_module, "load", return_value={
+        "server_port": 8765,
+        "telegram": {
+            "bot_token": "real-bot-token-123",
+            "allowed_user_id": 42,
+        },
+    }):
+        resp = client_and_agent[0].get("/config")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["telegram"]["bot_token"] == "***"
+    assert data["telegram"]["allowed_user_id"] == 42
+    assert data["server_port"] == 8765
+
+
 def test_config_post_deep_merges_guardrails(client_and_agent, tmp_path):
     import server as srv
     import config as cfg_module
