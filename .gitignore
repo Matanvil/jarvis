@@ -1,0 +1,23 @@
+.worktrees/
+__pycache__/
+*.pyc
+
+jarvis-swift/Jarvis.xcodeproj/xcuserdata/
+jarvis-swift/Jarvis.xcodeproj/project.xcworkspace/xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData/
+*.hmap
+*.ipa
+*.xcarchive
+*.dev.json
+
+# Internal planning docs
+docs/
+
+# macOS
+.DS_Store
+jarvis-swift/.DS_Store
+
+# Python venv
+jarvis-core/.venv/

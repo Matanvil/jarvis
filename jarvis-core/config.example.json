@@ -1,0 +1,31 @@
+{
+  "anthropic_api_key": "sk-ant-YOUR_KEY_HERE",
+  "brave_api_key": "",
+  "hotkey": "ctrl+space",
+  "ollama": {
+    "host": "http://localhost:11434",
+    "model": "llama3.1:8b",
+    "routing_mode": "haiku_first",
+    "timeout_seconds": 30
+  },
+  "models": {
+    "haiku": "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-4-6"
+  },
+  "reasoning": {
+    "max_steps_claude": 10,
+    "max_steps_ollama": 5,
+    "max_total_steps": 20,
+    "stall_detection": true
+  },
+  "narration": {
+    "mode": "milestones"
+  },
+  "guardrails": {
+    "modify_filesystem": "require_approval",
+    "delete_files": "require_approval",
+    "run_shell": "require_approval",
+    "network_requests": "allow",
+    "system_settings": "require_approval"
+  }
+}
