@@ -103,8 +103,10 @@ def test_telegram_defaults_present(tmp_config):
     assert cfg["telegram"]["bot_token"] == ""
     assert cfg["telegram"]["allowed_user_id"] == 0
 
+
 def test_telegram_configured_false_when_missing(tmp_config):
     assert config.telegram_configured() is False
+
 
 def test_telegram_configured_false_when_no_user_id(tmp_config):
     data = config.load()
@@ -112,14 +114,23 @@ def test_telegram_configured_false_when_no_user_id(tmp_config):
     config.save(data)
     assert config.telegram_configured() is False
 
+
 def test_telegram_configured_false_when_no_token(tmp_config):
     data = config.load()
     data["telegram"] = {"bot_token": "", "allowed_user_id": 12345}
     config.save(data)
     assert config.telegram_configured() is False
 
+
 def test_telegram_configured_true_when_both_set(tmp_config):
     data = config.load()
     data["telegram"] = {"bot_token": "abc123", "allowed_user_id": 99999}
     config.save(data)
     assert config.telegram_configured() is True
+
+
+def test_load_deep_merges_telegram(tmp_config):
+    config.save({**config.load(), "telegram": {"bot_token": "mytoken"}})
+    cfg = config.load()
+    assert cfg["telegram"]["bot_token"] == "mytoken"
+    assert cfg["telegram"]["allowed_user_id"] == 0
