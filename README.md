@@ -25,6 +25,7 @@ _Screenshots / GIF coming soon._
 - **Project memory** — remembers your build/test commands per project
 - **Haiku-first routing** — fast by default, escalates to Sonnet only when needed
 - **Two-way delegation** — Claude can hand off sub-tasks to local Ollama
+- **Telegram integration** — send commands from your phone, receive proactive notifications, approve destructive actions remotely (optional)
 
 ---
 
@@ -101,6 +102,37 @@ xcodegen generate
 open Jarvis.xcodeproj
 # Press ⌘B to build, ⌘R to run
 ```
+
+---
+
+## Optional Features
+
+### Telegram Integration
+
+Control Jarvis remotely from your phone and receive proactive notifications when you're away from your Mac.
+
+**What it enables:**
+- Send voice commands to Jarvis via Telegram while away
+- Receive notifications when long tasks complete
+- Approve or deny destructive actions remotely with `/approve` / `/deny`
+- Toggle away mode from the menu bar, via Telegram (`/away` / `/back`), or by voice
+
+**Setup:**
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram — copy the token it gives you
+2. Find your user ID by messaging [@userinfobot](https://t.me/userinfobot)
+3. Add both to `~/.jarvis/config.json`:
+
+```json
+"telegram": {
+  "bot_token": "YOUR_BOT_TOKEN",
+  "allowed_user_id": 123456789
+}
+```
+
+4. Restart Jarvis — the bot starts automatically if configured
+
+The feature is fully opt-in. If `bot_token` is empty or `allowed_user_id` is `0`, the entire subsystem is disabled with zero overhead.
 
 ---
 
