@@ -118,8 +118,8 @@ async def command(req: CommandRequest):
     if req.source != "telegram":
         state = telegram_state.get_state()
         if state.away:
-            state.away = False
             await notify("🟢 Jarvis back at the Mac — away mode off")
+            state.away = False
     duration_ms = int((time.time() - start) * 1000)
     if _loggers:
         _loggers["commands"].info(
@@ -230,6 +230,12 @@ def approve_classify(req: ClassifyRequest):
 
 class TelegramAwayRequest(BaseModel):
     away: bool
+
+
+@app.get("/telegram/away")
+def telegram_away_get():
+    from telegram_state import get_state
+    return {"away": get_state().away}
 
 
 @app.post("/telegram/away")

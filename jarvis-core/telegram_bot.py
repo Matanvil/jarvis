@@ -46,10 +46,11 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except (httpx.RequestError, httpx.TimeoutException):
         await update.message.reply_text("Server unavailable — is Jarvis running?")
         return
-    if data.get("approval_required"):
+    ar = data.get("approval_required")
+    if ar:
         state.pending_command = update.message.text
-        state.pending_tool_use_id = data.get("tool_use_id")
-        action = data.get("action", "this action")
+        state.pending_tool_use_id = ar.get("tool_use_id")
+        action = ar.get("description", "this action")
         await update.message.reply_text(
             f"Approval required: {action}\nReply /approve or /deny"
         )

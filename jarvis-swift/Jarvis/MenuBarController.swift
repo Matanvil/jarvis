@@ -74,6 +74,18 @@ final class MenuBarController {
         URLSession.shared.dataTask(with: request).resume()
     }
 
+    func syncAwayState() {
+        guard let url = URL(string: "http://127.0.0.1:8765/telegram/away") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Bool],
+                  let away = json["away"] else { return }
+            DispatchQueue.main.async {
+                self?.awayModeItem?.state = away ? .on : .off
+            }
+        }.resume()
+    }
+
     func setStatus(_ status: CoreStatus) {
         DispatchQueue.main.async { [weak self] in
             guard let button = self?.statusItem.button else { return }

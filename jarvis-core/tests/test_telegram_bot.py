@@ -70,9 +70,10 @@ async def test_approval_required_stores_pending():
     with patch("telegram_bot.cfg_module.load", return_value={"telegram": {"bot_token": "x", "allowed_user_id": 111}}):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {
-            "approval_required": True,
-            "tool_use_id": "tool_abc",
-            "action": "delete files"
+            "approval_required": {
+                "tool_use_id": "tool_abc",
+                "description": "delete files",
+            }
         }
         with patch("telegram_bot.httpx.AsyncClient") as mock_cls:
             mock_client = AsyncMock()
