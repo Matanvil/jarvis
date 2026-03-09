@@ -114,6 +114,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } else {
                 self.menuBarController?.setStatus(.online)
+                self.menuBarController?.syncAwayState()
             }
         }
         task.resume()

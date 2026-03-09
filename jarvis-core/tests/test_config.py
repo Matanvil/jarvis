@@ -90,3 +90,47 @@ def test_config_has_models_section(tmp_path, monkeypatch):
     cfg = config.load()
     assert cfg["models"]["haiku"] == "claude-haiku-4-5-20251001"
     assert cfg["models"]["sonnet"] == "claude-sonnet-4-6"
+
+
+@pytest.fixture
+def tmp_config(tmp_path, monkeypatch):
+    monkeypatch.setattr("config.CONFIG_PATH", tmp_path / "config.json")
+
+
+def test_telegram_defaults_present(tmp_config):
+    cfg = config.load()
+    assert "telegram" in cfg
+    assert cfg["telegram"]["bot_token"] == ""
+    assert cfg["telegram"]["allowed_user_id"] == 0
+
+
+def test_telegram_configured_false_when_missing(tmp_config):
+    assert config.telegram_configured() is False
+
+
+def test_telegram_configured_false_when_no_user_id(tmp_config):
+    data = config.load()
+    data["telegram"] = {"bot_token": "abc", "allowed_user_id": 0}
+    config.save(data)
+    assert config.telegram_configured() is False
+
+
+def test_telegram_configured_false_when_no_token(tmp_config):
+    data = config.load()
+    data["telegram"] = {"bot_token": "", "allowed_user_id": 12345}
+    config.save(data)
+    assert config.telegram_configured() is False
+
+
+def test_telegram_configured_true_when_both_set(tmp_config):
+    data = config.load()
+    data["telegram"] = {"bot_token": "abc123", "allowed_user_id": 99999}
+    config.save(data)
+    assert config.telegram_configured() is True
+
+
+def test_load_deep_merges_telegram(tmp_config):
+    config.save({**config.load(), "telegram": {"bot_token": "mytoken"}})
+    cfg = config.load()
+    assert cfg["telegram"]["bot_token"] == "mytoken"
+    assert cfg["telegram"]["allowed_user_id"] == 0

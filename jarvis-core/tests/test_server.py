@@ -1,7 +1,15 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch
 from command_pipeline import CommandPipeline
+import telegram_state
+
+
+@pytest.fixture(autouse=True)
+def clean_telegram_state():
+    telegram_state.reset_state()
+    yield
+    telegram_state.reset_state()
 
 
 @pytest.fixture
@@ -237,6 +245,24 @@ def test_get_config_redacts_api_keys(client_and_agent, tmp_path):
     assert data["server_port"] == 8765
 
 
+def test_get_config_redacts_nested_bot_token(client_and_agent):
+    """GET /config must redact telegram.bot_token (nested sensitive key ending in _token)."""
+    import config as cfg_module
+    with patch.object(cfg_module, "load", return_value={
+        "server_port": 8765,
+        "telegram": {
+            "bot_token": "real-bot-token-123",
+            "allowed_user_id": 42,
+        },
+    }):
+        resp = client_and_agent[0].get("/config")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["telegram"]["bot_token"] == "***"
+    assert data["telegram"]["allowed_user_id"] == 42
+    assert data["server_port"] == 8765
+
+
 def test_config_post_deep_merges_guardrails(client_and_agent, tmp_path):
     import server as srv
     import config as cfg_module
@@ -278,3 +304,42 @@ def test_approve_classify_unclear(client_and_agent):
     with patch("server._classify_approval", return_value=None):
         resp = client_and_agent[0].post("/approve/classify", json={"text": "um what"})
     assert resp.json()["approved"] is None
+
+
+# --- Convenience fixture that exposes just the TestClient ---
+@pytest.fixture
+def client(client_and_agent):
+    return client_and_agent[0]
+
+
+# --- Telegram /away endpoint and auto-disable tests ---
+
+def test_telegram_away_endpoint_sets_true(client):
+    resp = client.post("/telegram/away", json={"away": True})
+    assert resp.status_code == 200
+    assert telegram_state.get_state().away is True
+
+
+def test_telegram_away_endpoint_sets_false(client):
+    telegram_state.get_state().away = True
+    resp = client.post("/telegram/away", json={"away": False})
+    assert resp.status_code == 200
+    assert telegram_state.get_state().away is False
+
+
+def test_hotkey_command_while_away_auto_disables(client):
+    telegram_state.get_state().away = True
+    telegram_state.get_state().chat_id = 12345
+    with patch("server.notify", new_callable=AsyncMock) as mock_notify:
+        resp = client.post("/command", json={"text": "list files", "source": "hotkey"})
+    assert resp.status_code == 200
+    assert telegram_state.get_state().away is False
+    mock_notify.assert_awaited_once_with("🟢 Jarvis back at the Mac — away mode off")
+
+
+def test_telegram_command_does_not_disable_away(client):
+    telegram_state.get_state().away = True
+    with patch("server.notify", new_callable=AsyncMock):
+        resp = client.post("/command", json={"text": "list files", "source": "telegram"})
+    assert resp.status_code == 200
+    assert telegram_state.get_state().away is True

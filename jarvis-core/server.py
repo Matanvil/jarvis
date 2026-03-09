@@ -14,6 +14,9 @@ import logger as logger_module
 from command_pipeline import CommandPipeline
 from guardrails import Guardrails
 from router import Router
+from telegram_bot import start_bot, stop_bot
+from notifications import notify
+import telegram_state
 
 _pipeline = None
 _loggers = None
@@ -60,7 +63,9 @@ async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
     _ensure_ollama_running()
     _pipeline, _loggers, _guardrails = load_dependencies()
+    await start_bot()
     yield
+    await stop_bot()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -96,7 +101,7 @@ def reset_conversation():
 
 
 @app.post("/command")
-def command(req: CommandRequest):
+async def command(req: CommandRequest):
     import anthropic as _anthropic
     start = time.time()
     try:
@@ -109,6 +114,12 @@ def command(req: CommandRequest):
         logging.getLogger("jarvis.errors").exception("Unhandled error in /command")
         msg = "I'm experiencing an error. Please try again or restart Jarvis."
         return {"speak": msg, "display": msg, "steps": []}
+    # Auto-disable away mode if command came from the Mac (not Telegram)
+    if req.source != "telegram":
+        state = telegram_state.get_state()
+        if state.away:
+            await notify("🟢 Jarvis back at the Mac — away mode off")
+            state.away = False
     duration_ms = int((time.time() - start) * 1000)
     if _loggers:
         _loggers["commands"].info(
@@ -217,13 +228,39 @@ def approve_classify(req: ClassifyRequest):
     return {"approved": result}
 
 
+class TelegramAwayRequest(BaseModel):
+    away: bool
+
+
+@app.get("/telegram/away")
+def telegram_away_get():
+    from telegram_state import get_state
+    return {"away": get_state().away}
+
+
+@app.post("/telegram/away")
+def telegram_away(req: TelegramAwayRequest):
+    from telegram_state import get_state
+    get_state().away = req.away
+    return {"away": req.away}
+
+
+def _redact_sensitive(obj):
+    """Recursively redact values whose keys end in _key, _secret, or _token."""
+    if not isinstance(obj, dict):
+        return obj
+    return {
+        k: "***" if isinstance(v, str) and (
+            k.endswith("_key") or k.endswith("_secret") or k.endswith("_token")
+        ) else _redact_sensitive(v)
+        for k, v in obj.items()
+    }
+
+
 @app.get("/config")
 def get_config():
     config = cfg_module.load()
-    return {
-        k: "***" if isinstance(v, str) and (k.endswith("_key") or k.endswith("_secret")) else v
-        for k, v in config.items()
-    }
+    return _redact_sensitive(config)
 
 
 def _deep_merge(base: dict, updates: dict) -> dict:
