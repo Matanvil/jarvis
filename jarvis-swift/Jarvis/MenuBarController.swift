@@ -6,6 +6,7 @@ enum CoreStatus {
 
 final class MenuBarController {
     private let statusItem: NSStatusItem
+    private var awayModeItem: NSMenuItem?
 
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -28,6 +29,16 @@ final class MenuBarController {
         newConvo.target = self
         menu.addItem(newConvo)
         menu.addItem(.separator())
+        let awayItem = NSMenuItem(
+            title: "Away mode",
+            action: #selector(toggleAway(_:)),
+            keyEquivalent: ""
+        )
+        awayItem.state = .off
+        awayItem.target = self
+        self.awayModeItem = awayItem
+        menu.addItem(awayItem)
+        menu.addItem(NSMenuItem.separator())
         let quit = NSMenuItem(
             title: "Quit Jarvis",
             action: #selector(NSApplication.terminate(_:)),
@@ -35,6 +46,22 @@ final class MenuBarController {
         )
         menu.addItem(quit)
         statusItem.menu = menu
+    }
+
+    @objc private func toggleAway(_ sender: NSMenuItem) {
+        let willBeAway = sender.state == .off  // toggling to new state
+        let body = "{\"away\": \(willBeAway ? "true" : "false")}"
+        guard let url = URL(string: "http://127.0.0.1:8765/telegram/away"),
+              let data = body.data(using: .utf8) else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = data
+        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
+            DispatchQueue.main.async {
+                sender.state = willBeAway ? .on : .off
+            }
+        }.resume()
     }
 
     @objc private func resetConversation() {
