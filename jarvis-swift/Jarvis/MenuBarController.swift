@@ -28,7 +28,7 @@ final class MenuBarController {
         )
         newConvo.target = self
         menu.addItem(newConvo)
-        menu.addItem(.separator())
+        menu.addItem(NSMenuItem.separator())
         let awayItem = NSMenuItem(
             title: "Away mode",
             action: #selector(toggleAway(_:)),
@@ -49,15 +49,18 @@ final class MenuBarController {
     }
 
     @objc private func toggleAway(_ sender: NSMenuItem) {
-        let willBeAway = sender.state == .off  // toggling to new state
-        let body = "{\"away\": \(willBeAway ? "true" : "false")}"
+        let willBeAway = sender.state == .off
+        let payload: [String: Bool] = ["away": willBeAway]
         guard let url = URL(string: "http://127.0.0.1:8765/telegram/away"),
-              let data = body.data(using: .utf8) else { return }
+              let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = data
-        URLSession.shared.dataTask(with: req) { [weak self] _, _, _ in
+        req.httpBody = body
+        URLSession.shared.dataTask(with: req) { [weak self] _, response, error in
+            guard error == nil,
+                  let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else { return }
             DispatchQueue.main.async {
                 sender.state = willBeAway ? .on : .off
             }
