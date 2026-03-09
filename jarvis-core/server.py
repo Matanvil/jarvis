@@ -14,6 +14,8 @@ import logger as logger_module
 from command_pipeline import CommandPipeline
 from guardrails import Guardrails
 from router import Router
+from telegram_bot import start_bot, stop_bot
+from notifications import notify
 
 _pipeline = None
 _loggers = None
@@ -60,7 +62,9 @@ async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
     _ensure_ollama_running()
     _pipeline, _loggers, _guardrails = load_dependencies()
+    await start_bot()
     yield
+    await stop_bot()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -109,6 +113,18 @@ def command(req: CommandRequest):
         logging.getLogger("jarvis.errors").exception("Unhandled error in /command")
         msg = "I'm experiencing an error. Please try again or restart Jarvis."
         return {"speak": msg, "display": msg, "steps": []}
+    # Auto-disable away mode if command came from the Mac (not Telegram)
+    if req.source != "telegram":
+        from telegram_state import get_state
+        state = get_state()
+        if state.away:
+            state.away = False
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                loop.create_task(notify("🟢 Jarvis back at the Mac — away mode off"))
+            except RuntimeError:
+                pass  # no event loop available (e.g. test context without running loop)
     duration_ms = int((time.time() - start) * 1000)
     if _loggers:
         _loggers["commands"].info(
@@ -215,6 +231,17 @@ def _classify_approval(text: str) -> bool | None:
 def approve_classify(req: ClassifyRequest):
     result = _classify_approval(req.text)
     return {"approved": result}
+
+
+class TelegramAwayRequest(BaseModel):
+    away: bool
+
+
+@app.post("/telegram/away")
+def telegram_away(req: TelegramAwayRequest):
+    from telegram_state import get_state
+    get_state().away = req.away
+    return {"away": req.away}
 
 
 @app.get("/config")
