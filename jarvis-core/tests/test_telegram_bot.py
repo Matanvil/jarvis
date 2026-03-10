@@ -163,3 +163,108 @@ async def test_deny_with_pending():
             await telegram_bot._handle_deny(update, _make_context())
     assert telegram_state.get_state().pending_command is None
     update.message.reply_text.assert_awaited_once_with("Action denied.")
+
+
+# --- /schedule and /schedules tests ---
+
+@pytest.fixture
+def schedule_update():
+    update = MagicMock()
+    update.effective_chat.id = 12345
+    update.message = MagicMock()
+    update.message.text = "/schedule every morning at 9, summarise my calendar"
+    update.message.reply_text = AsyncMock()
+    return update
+
+
+@pytest.fixture
+def schedules_update():
+    update = MagicMock()
+    update.effective_chat.id = 12345
+    update.message = MagicMock()
+    update.message.text = "/schedules"
+    update.message.reply_text = AsyncMock()
+    return update
+
+
+@pytest.mark.asyncio
+async def test_handle_schedule_forwards_to_pipeline(schedule_update):
+    context = MagicMock()
+    context.bot.send_chat_action = AsyncMock()
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"response": "Scheduled morning summary daily at 9am.", "error": None}
+
+    with patch("telegram_bot._validate", new=AsyncMock(return_value=True)), \
+         patch("telegram_bot.get_state") as mock_state, \
+         patch("httpx.AsyncClient") as mock_client:
+        state = MagicMock()
+        state.chat_id = 12345
+        mock_state.return_value = state
+        mock_client.return_value.__aenter__ = AsyncMock(return_value=MagicMock(
+            post=AsyncMock(return_value=mock_resp)
+        ))
+        mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        from telegram_bot import _handle_schedule
+        await _handle_schedule(schedule_update, context)
+
+    schedule_update.message.reply_text.assert_called_once()
+    text = schedule_update.message.reply_text.call_args[0][0]
+    assert "Scheduled" in text
+
+
+@pytest.mark.asyncio
+async def test_handle_schedule_empty_command(schedule_update):
+    schedule_update.message.text = "/schedule"
+    context = MagicMock()
+
+    with patch("telegram_bot._validate", new=AsyncMock(return_value=True)):
+        from telegram_bot import _handle_schedule
+        await _handle_schedule(schedule_update, context)
+
+    schedule_update.message.reply_text.assert_called_once()
+    text = schedule_update.message.reply_text.call_args[0][0]
+    assert "Usage" in text
+
+
+@pytest.mark.asyncio
+async def test_handle_schedules_empty(schedules_update):
+    context = MagicMock()
+    import scheduler as sched_module
+
+    mock_sched = MagicMock()
+    mock_sched.list.return_value = []
+
+    with patch("telegram_bot._validate", new=AsyncMock(return_value=True)), \
+         patch.object(sched_module, "_scheduler", mock_sched):
+        from telegram_bot import _handle_schedules
+        await _handle_schedules(schedules_update, context)
+
+    schedules_update.message.reply_text.assert_called_once_with("No scheduled tasks.")
+
+
+@pytest.mark.asyncio
+async def test_handle_schedules_lists_tasks(schedules_update):
+    context = MagicMock()
+    from schedule_store import Schedule
+    from datetime import datetime, timezone
+    import scheduler as sched_module
+
+    sample = Schedule(
+        id="abc123", label="morning summary", command="summarise my calendar",
+        schedule_type="recurring", cron="0 9 * * *", run_at_iso=None,
+        enabled=True, created_at=datetime.now(timezone.utc).isoformat(), output="telegram",
+    )
+    mock_sched = MagicMock()
+    mock_sched.list.return_value = [sample]
+
+    with patch("telegram_bot._validate", new=AsyncMock(return_value=True)), \
+         patch.object(sched_module, "_scheduler", mock_sched):
+        from telegram_bot import _handle_schedules
+        await _handle_schedules(schedules_update, context)
+
+    schedules_update.message.reply_text.assert_called_once()
+    text = schedules_update.message.reply_text.call_args[0][0]
+    assert "morning summary" in text
+    assert "abc123" in text

@@ -157,6 +157,50 @@ async def _handle_deny(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text("Action denied.")
 
 
+async def _handle_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /schedule <command> — forwards to command pipeline."""
+    if not await _validate(update):
+        return
+    state = get_state()
+    state.chat_id = update.effective_chat.id
+    text = update.message.text.removeprefix("/schedule").strip()
+    if not text:
+        await update.message.reply_text(
+            "Usage: /schedule <what and when>\nExample: /schedule every morning at 9, summarise my calendar"
+        )
+        return
+    await context.bot.send_chat_action(chat_id=state.chat_id, action="typing")
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "http://127.0.0.1:8765/command",
+            json={"text": text, "source": "telegram"},
+        )
+    result = resp.json()
+    response_text = result.get("response") or result.get("error") or "Done."
+    await update.message.reply_text(response_text)
+
+
+async def _handle_schedules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /schedules — list all scheduled tasks."""
+    if not await _validate(update):
+        return
+    import scheduler as sched_module
+    s = sched_module.get_scheduler()
+    if s is None:
+        await update.message.reply_text("Scheduler not running.")
+        return
+    schedules = s.list()
+    if not schedules:
+        await update.message.reply_text("No scheduled tasks.")
+        return
+    lines = []
+    for i, sched in enumerate(schedules, 1):
+        status = "✓" if sched.enabled else "⏸"
+        timing = f"cron: {sched.cron}" if sched.cron else f"at: {sched.run_at_iso}"
+        lines.append(f"{i}. {status} {sched.label} ({timing}) [id: {sched.id}]")
+    await update.message.reply_text("\n".join(lines))
+
+
 def create_app() -> Application | None:
     conf = cfg_module.load()
     t = conf.get("telegram", {})
@@ -173,6 +217,8 @@ def create_app() -> Application | None:
     app.add_handler(CommandHandler("back", _handle_back))
     app.add_handler(CommandHandler("approve", _handle_approve))
     app.add_handler(CommandHandler("deny", _handle_deny))
+    app.add_handler(CommandHandler("schedule", _handle_schedule))
+    app.add_handler(CommandHandler("schedules", _handle_schedules))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
     return app
 
