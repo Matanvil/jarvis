@@ -236,7 +236,95 @@ TOOL_DEFINITIONS = [
             "required": ["task"],
         },
     },
+    {
+        "name": "create_schedule",
+        "description": "Schedule a Jarvis command to run on a recurring or one-time basis. Always generate a short human-readable label summarising what the task does. For recurring tasks provide a 5-field cron expression. For one-time tasks provide run_at_iso as an ISO 8601 datetime string. Always confirm with the user what you are scheduling before calling this tool.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The Jarvis command to run (natural language)"},
+                "label": {"type": "string", "description": "Short human-readable name, e.g. 'morning calendar summary'"},
+                "schedule_type": {"type": "string", "enum": ["recurring", "one_time"]},
+                "cron": {"type": ["string", "null"], "description": "5-field cron expression for recurring, e.g. '0 9 * * *'. Null for one_time."},
+                "run_at_iso": {"type": ["string", "null"], "description": "ISO 8601 datetime for one_time. Null for recurring."},
+            },
+            "required": ["command", "label", "schedule_type", "cron", "run_at_iso"],
+        },
+    },
+    {
+        "name": "list_schedules",
+        "description": "List all scheduled tasks.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "delete_schedule",
+        "description": "Delete a scheduled task by ID. Always call list_schedules first to confirm the correct ID. If multiple schedules could match, list them and ask the user which one to delete before proceeding.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "schedule_id": {"type": "string", "description": "The schedule ID to delete"},
+            },
+            "required": ["schedule_id"],
+        },
+    },
+    {
+        "name": "pause_schedule",
+        "description": "Pause a scheduled task without deleting it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"schedule_id": {"type": "string"}},
+            "required": ["schedule_id"],
+        },
+    },
+    {
+        "name": "resume_schedule",
+        "description": "Resume a paused scheduled task.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"schedule_id": {"type": "string"}},
+            "required": ["schedule_id"],
+        },
+    },
 ]
+
+SCHEDULE_TOOLS = {"create_schedule", "list_schedules", "delete_schedule", "pause_schedule", "resume_schedule"}
+
+
+def _handle_schedule_tool(tool_name: str, tool_input: dict) -> dict:
+    import scheduler as sched_module
+    from dataclasses import asdict
+
+    s = sched_module.get_scheduler()
+    if s is None:
+        return {"error": "Scheduler not running"}
+
+    if tool_name == "create_schedule":
+        schedule = s.create(
+            command=tool_input["command"],
+            label=tool_input["label"],
+            schedule_type=tool_input["schedule_type"],
+            cron=tool_input.get("cron"),
+            run_at_iso=tool_input.get("run_at_iso"),
+        )
+        return asdict(schedule)
+
+    elif tool_name == "list_schedules":
+        return {"schedules": [asdict(x) for x in s.list()]}
+
+    elif tool_name == "delete_schedule":
+        ok = s.delete(tool_input["schedule_id"])
+        return {"ok": ok, "error": None if ok else "Schedule not found"}
+
+    elif tool_name == "pause_schedule":
+        result = s.pause(tool_input["schedule_id"])
+        return asdict(result) if result else {"error": "Schedule not found"}
+
+    elif tool_name == "resume_schedule":
+        result = s.resume(tool_input["schedule_id"])
+        return asdict(result) if result else {"error": "Schedule not found"}
+
+    return {"error": f"Unknown schedule tool: {tool_name}"}
+
 
 _MILESTONE_TOOLS = {"delegate_to_local", "delegate_to_claude_code"}
 
@@ -343,13 +431,16 @@ class Agent:
                 steps.append(step)
 
                 try:
-                    result = execute_tool(
-                        block.name, block.input,
-                        self._shell, self._web, self._code, self._macos,
-                        self._guardrails,
-                        default_cwd=cwd,
-                        local_agent=self._local_agent,
-                    )
+                    if block.name in SCHEDULE_TOOLS:
+                        result = _handle_schedule_tool(block.name, block.input)
+                    else:
+                        result = execute_tool(
+                            block.name, block.input,
+                            self._shell, self._web, self._code, self._macos,
+                            self._guardrails,
+                            default_cwd=cwd,
+                            local_agent=self._local_agent,
+                        )
                     step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
                     tool_calls_made.append(block.name)
                     tool_results.append({
