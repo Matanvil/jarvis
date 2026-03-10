@@ -5,6 +5,9 @@ import SwiftUI
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var pythonProcess: Process?
+    private var isRestarting = false
+    private var isTerminating = false
+    private var lastRestartTime: Date = .distantPast
     private var healthTimer: Timer?
     private var hudWindow: HUDWindow?
     private var hudController: NSHostingController<HUDView>?
@@ -35,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        isTerminating = true
         healthTimer?.invalidate()
         if let proc = pythonProcess, proc.processIdentifier > 0 {
             proc.terminate()  // SIGTERM — give uvicorn a chance to flush
@@ -74,44 +78,66 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         cleanup.waitUntilExit()
     }
 
-    private func startPythonCore() {
-        DispatchQueue.global(qos: .userInitiated).async {
-            // Kill our tracked process if any
-            if let pid = self.pythonProcess?.processIdentifier, pid > 0 {
+    func startPythonCore() {
+        // Always enter on main thread so isRestarting and pythonProcess are accessed safely.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isRestarting else {
+                NSLog("[Jarvis] startPythonCore called while already restarting — skipping")
+                return
+            }
+            self.isRestarting = true
+            self.lastRestartTime = Date()
+
+            // Immediately reflect the offline state in the UI.
+            self.menuBarController?.setStatus(.offline)
+
+            // Kill tracked process now, on main thread, before handing off to background.
+            let dyingProcess = self.pythonProcess
+            if let pid = dyingProcess?.processIdentifier, pid > 0 {
                 kill(pid, SIGKILL)
             }
             self.pythonProcess = nil
 
-            // Kill any orphaned process still holding port 8765 (e.g. from a previous run)
-            // waitUntilExit() is safe here — we're on a background queue
-            self.killOrphanedServer()
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self else { return }
+                defer { DispatchQueue.main.async { self.isRestarting = false } }
 
-            let coreDir = self.resolveCoreDirectory()
-            let venvPython = coreDir.appendingPathComponent(".venv/bin/python")
+                // Wait for the tracked process to fully exit before sweeping the port.
+                dyingProcess?.waitUntilExit()
+                // Kill any orphaned process still holding port 8765.
+                self.killOrphanedServer()
 
-            guard FileManager.default.fileExists(atPath: venvPython.path) else {
-                NSLog("[Jarvis] Python venv not found at %@", venvPython.path)
-                return
-            }
+                let coreDir = self.resolveCoreDirectory()
+                let venvPython = coreDir.appendingPathComponent(".venv/bin/python")
 
-            let process = Process()
-            process.executableURL = venvPython
-            process.arguments = [
-                "-m", "uvicorn", "server:app",
-                "--host", "127.0.0.1",
-                "--port", "8765",
-                "--log-level", "warning",
-            ]
-            process.currentDirectoryURL = coreDir
-
-            do {
-                try process.run()
-                DispatchQueue.main.async {
-                    self.pythonProcess = process
-                    NSLog("[Jarvis] Python core started (pid %d)", process.processIdentifier)
+                guard FileManager.default.fileExists(atPath: venvPython.path) else {
+                    NSLog("[Jarvis] Python venv not found at %@", venvPython.path)
+                    return
                 }
-            } catch {
-                NSLog("[Jarvis] Failed to start Python core: %@", error.localizedDescription)
+
+                let process = Process()
+                process.executableURL = venvPython
+                process.arguments = [
+                    "-m", "uvicorn", "server:app",
+                    "--host", "127.0.0.1",
+                    "--port", "8765",
+                    "--log-level", "warning",
+                ]
+                process.currentDirectoryURL = coreDir
+
+                do {
+                    try process.run()
+                    DispatchQueue.main.async {
+                        guard !self.isTerminating else {
+                            kill(process.processIdentifier, SIGKILL)
+                            return
+                        }
+                        self.pythonProcess = process
+                        NSLog("[Jarvis] Python core started (pid %d)", process.processIdentifier)
+                    }
+                } catch {
+                    NSLog("[Jarvis] Failed to start Python core: %@", error.localizedDescription)
+                }
             }
         }
     }
@@ -119,9 +145,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Health Poll
 
     private func scheduleHealthPoll() {
-        healthTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 5.0, repeats: true) { [weak self] _ in
             self?.checkHealth()
         }
+        // Add to .common so the timer keeps firing while modal sheets are open.
+        RunLoop.main.add(timer, forMode: .common)
+        healthTimer = timer
     }
 
     private func checkHealth() {
@@ -133,7 +162,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             if error != nil || (response as? HTTPURLResponse)?.statusCode != 200 {
                 self.menuBarController?.setStatus(.offline)
-                DispatchQueue.global(qos: .utility).async {
+                // Cooldown check and restart must both happen on the main thread so
+                // lastRestartTime is read safely (it is only written on main).
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          Date().timeIntervalSince(self.lastRestartTime) > 15 else { return }
                     NSLog("[Jarvis] Python core not responding — restarting")
                     self.startPythonCore()
                 }
