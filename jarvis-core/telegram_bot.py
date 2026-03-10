@@ -170,13 +170,17 @@ async def _handle_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return
     await context.bot.send_chat_action(chat_id=state.chat_id, action="typing")
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            "http://127.0.0.1:8765/command",
-            json={"text": text, "source": "telegram"},
-        )
-    result = resp.json()
-    response_text = result.get("response") or result.get("error") or "Done."
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                "http://127.0.0.1:8765/command",
+                json={"text": text, "source": "telegram"},
+            )
+        result = resp.json()
+        response_text = result.get("response") or result.get("error") or "Done."
+    except (httpx.TimeoutException, httpx.RequestError) as e:
+        log.error("Schedule command failed: %s", e)
+        response_text = "Sorry, couldn't reach the Jarvis server. Try again."
     await update.message.reply_text(response_text)
 
 
@@ -184,6 +188,8 @@ async def _handle_schedules(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """Handle /schedules — list all scheduled tasks."""
     if not await _validate(update):
         return
+    state = get_state()
+    state.chat_id = update.effective_chat.id
     import scheduler as sched_module
     s = sched_module.get_scheduler()
     if s is None:

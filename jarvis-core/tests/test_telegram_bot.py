@@ -197,7 +197,7 @@ async def test_handle_schedule_forwards_to_pipeline(schedule_update):
 
     with patch("telegram_bot._validate", new=AsyncMock(return_value=True)), \
          patch("telegram_bot.get_state") as mock_state, \
-         patch("httpx.AsyncClient") as mock_client:
+         patch("telegram_bot.httpx.AsyncClient") as mock_client:
         state = MagicMock()
         state.chat_id = 12345
         mock_state.return_value = state
