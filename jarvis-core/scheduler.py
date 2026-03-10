@@ -125,14 +125,25 @@ class Scheduler:
         )
 
     def _execute(self, schedule_id: str) -> None:
+        import time
         s = self.store.get(schedule_id)
         if s is None:
             return
         log.info("Running scheduled task '%s': %s", s.label, s.command)
+        cmd_log = logging.getLogger("jarvis.commands")
+        start = time.time()
         try:
             result = self._pipeline.submit(s.command, source="scheduled")
+            duration_ms = int((time.time() - start) * 1000)
+            cmd_log.info(
+                f"cmd={s.command!r} source='scheduled' label={s.label!r} duration_ms={duration_ms} result={result}"
+            )
             send_telegram_result(s.label, result.get("display") or result.get("speak", ""), result.get("error"), loop=self._loop)
         except Exception as e:
+            duration_ms = int((time.time() - start) * 1000)
+            cmd_log.error(
+                f"cmd={s.command!r} source='scheduled' label={s.label!r} duration_ms={duration_ms} error={e!r}"
+            )
             log.error("Scheduled task '%s' failed: %s", s.label, e)
             send_telegram_result(s.label, "", str(e), loop=self._loop)
 

@@ -240,7 +240,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "create_schedule",
-        "description": "Schedule a Jarvis command to run on a recurring or one-time basis. Store the command exactly as the user stated it — do not pre-compute responses or transform it. Always generate a short human-readable label. For recurring tasks provide a 5-field cron expression (e.g. '0 9 * * *'). For one-time tasks compute run_at_iso from the current datetime in the system prompt plus any offset the user specified (e.g. 'in 2 minutes' → current time + 2 min as ISO 8601 local time). run_at_iso MUST be a future datetime.",
+        "description": "Schedule a Jarvis command to run on a recurring or one-time basis. Always generate a short human-readable label. For recurring tasks provide a 5-field cron expression (e.g. '0 9 * * *'). For one-time tasks compute run_at_iso from the current datetime in the system prompt plus any offset the user specified (e.g. 'in 2 minutes' → current time + 2 min as ISO 8601 local time). run_at_iso MUST be a future datetime. IMPORTANT — for the command field: if the user wants to be reminded or notified of something (e.g. 'remind me to call mom', 'send me a smile emoji', 'notify me that X'), store only what needs to be delivered, not how to deliver it — e.g. 'Call mom reminder' or 'smile emoji'. For action tasks (summarise calendar, run build, etc.) store the action as a clear imperative.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -363,9 +363,15 @@ class Agent:
             prompt += f"\nProject memory: {memory_context}\n"
         if source == "scheduled":
             prompt += (
-                "\nThis command is running as a SCHEDULED TASK. "
-                "Return your response as plain text — it will be sent directly to the user via Telegram. "
-                "Do NOT use macOS notification tools. Just answer or do the task and return the result as text.\n"
+                "\n\n=== SCHEDULED TASK MODE ===\n"
+                "Rules (strictly enforced):\n"
+                "- NEVER call tools to send messages (no curl, no Telegram API, no notify, no create_schedule).\n"
+                "- If the command is reminder content (a word, phrase, or emoji) — output ONLY that text, nothing else.\n"
+                "  BAD: 'Here is your reminder: Call mom'\n"
+                "  BAD: 'I understand, this is a reminder. Call mom'\n"
+                "  GOOD: 'Call mom'\n"
+                "- If the command is an action task (summarise, check, run, etc.) — use tools and output only the result.\n"
+                "=== END SCHEDULED TASK MODE ===\n"
             )
         return prompt
 
@@ -443,20 +449,25 @@ class Agent:
                 try:
                     if block.name in SCHEDULE_TOOLS:
                         if block.name == "create_schedule":
-                            cron = block.input.get("cron")
-                            run_at = block.input.get("run_at_iso")
-                            timing = f"cron '{cron}'" if cron else f"at {run_at}"
-                            label = block.input.get("label", "")
-                            command = block.input.get("command", "")
-                            action = Action(
-                                "schedule_create",
-                                f"Schedule '{label}' to run '{command}' ({timing})",
-                            )
-                            if self._guardrails.classify(action) == Decision.REQUIRE_APPROVAL:
-                                raise ApprovalRequiredError(
-                                    "create_schedule", action.description, "schedule_create"
+                            if source == "scheduled":
+                                result = json.dumps({"error": "create_schedule is not allowed inside a scheduled task"})
+                            else:
+                                cron = block.input.get("cron")
+                                run_at = block.input.get("run_at_iso")
+                                timing = f"cron '{cron}'" if cron else f"at {run_at}"
+                                label = block.input.get("label", "")
+                                command = block.input.get("command", "")
+                                action = Action(
+                                    "schedule_create",
+                                    f"Schedule '{label}' to run '{command}' ({timing})",
                                 )
-                        result = json.dumps(_handle_schedule_tool(block.name, block.input))
+                                if self._guardrails.classify(action) == Decision.REQUIRE_APPROVAL:
+                                    raise ApprovalRequiredError(
+                                        "create_schedule", action.description, "schedule_create"
+                                    )
+                                result = json.dumps(_handle_schedule_tool(block.name, block.input))
+                        else:
+                            result = json.dumps(_handle_schedule_tool(block.name, block.input))
                     else:
                         result = execute_tool(
                             block.name, block.input,

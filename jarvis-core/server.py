@@ -125,15 +125,29 @@ def reset_conversation():
 @app.post("/command")
 async def command(req: CommandRequest):
     import anthropic as _anthropic
+    import asyncio
     start = time.time()
     try:
-        result = _pipeline.submit(req.text, cwd=req.cwd, source=req.source)
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, lambda: _pipeline.submit(req.text, cwd=req.cwd, source=req.source)
+        )
     except _anthropic.RateLimitError:
         msg = "I've hit the API rate limit. Please wait a moment and try again."
         logging.getLogger("jarvis.errors").warning("Rate limit hit on /command")
+        duration_ms = int((time.time() - start) * 1000)
+        if _loggers:
+            _loggers["commands"].warning(
+                f"cmd={req.text!r} source={req.source!r} duration_ms={duration_ms} error='rate_limit'"
+            )
         return {"speak": msg, "display": msg, "steps": []}
     except Exception as exc:
         logging.getLogger("jarvis.errors").exception("Unhandled error in /command")
+        duration_ms = int((time.time() - start) * 1000)
+        if _loggers:
+            _loggers["commands"].error(
+                f"cmd={req.text!r} source={req.source!r} duration_ms={duration_ms} error={exc!r}"
+            )
         msg = "I'm experiencing an error. Please try again or restart Jarvis."
         return {"speak": msg, "display": msg, "steps": []}
     # Auto-disable away mode if command came from the Mac (not Telegram)

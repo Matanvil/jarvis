@@ -13,6 +13,7 @@ import config as cfg_module
 from telegram_state import get_state
 
 log = logging.getLogger("jarvis.telegram")
+err_log = logging.getLogger("jarvis.errors")
 
 _app: Application | None = None
 _SERVER_URL = "http://127.0.0.1:8765"
@@ -30,12 +31,28 @@ async def _validate(update: Update) -> bool:
     return update.effective_user.id == allowed
 
 
+async def _handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global error handler — logs full traceback and notifies the user."""
+    err_log.error("Unhandled exception in Telegram handler", exc_info=context.error)
+    # Best-effort reply so the user is never left in silence.
+    msg = "Something went wrong — try again."
+    try:
+        if isinstance(update, Update) and update.effective_message:
+            await update.effective_message.reply_text(msg)
+        else:
+            state = get_state()
+            if state.chat_id and _app:
+                await _app.bot.send_message(chat_id=state.chat_id, text=msg)
+    except Exception:
+        pass  # If even the fallback fails, at least it's logged above.
+
+
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _validate(update):
         return
     state = get_state()
     state.chat_id = update.effective_chat.id
-    await context.bot.send_chat_action(chat_id=state.chat_id, action="typing")
+    await update.message.reply_text("⏳ On it...")
     for attempt in range(2):
         try:
             async with httpx.AsyncClient() as client:
@@ -44,7 +61,12 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     json={"text": update.message.text, "source": "telegram"},
                     timeout=120.0,
                 )
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except ValueError:
+                    err_log.error("Non-JSON response from server: status=%d body=%r", resp.status_code, resp.text[:200])
+                    await update.message.reply_text("Server returned an unexpected response — try again.")
+                    return
             break
         except httpx.TimeoutException:
             await update.message.reply_text("Jarvis is taking too long — command may still be running.")
@@ -55,6 +77,11 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 continue
             await update.message.reply_text("Server unavailable — is Jarvis running?")
             return
+    if data.get("busy"):
+        await update.message.reply_text(
+            "I'm busy with another command right now. Please try again in a moment."
+        )
+        return
     ar = data.get("approval_required")
     if ar:
         state.pending_command = update.message.text
@@ -96,6 +123,7 @@ async def _handle_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     tool_use_id = state.pending_tool_use_id
     pending_cmd = state.pending_command
+    await update.message.reply_text("⏳ On it...")
     try:
         for attempt in range(2):
             try:
@@ -114,7 +142,12 @@ async def _handle_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         json={"text": pending_cmd, "source": "telegram"},
                         timeout=120.0,
                     )
-                    data = resp.json()
+                    try:
+                        data = resp.json()
+                    except ValueError:
+                        err_log.error("Non-JSON response from server on approve: status=%d body=%r", resp.status_code, resp.text[:200])
+                        await update.message.reply_text("Server returned an unexpected response — try again.")
+                        return
                 reply = data.get("display") or data.get("speak") or data.get("error") or "Done."
                 await update.message.reply_text(reply)
                 break
@@ -170,14 +203,19 @@ async def _handle_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             "Usage: /schedule <what and when>\nExample: /schedule every morning at 9, summarise my calendar"
         )
         return
-    await context.bot.send_chat_action(chat_id=state.chat_id, action="typing")
+    await update.message.reply_text("⏳ On it...")
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{_SERVER_URL}/command",
                 json={"text": text, "source": "telegram"},
             )
-        result = resp.json()
+        try:
+            result = resp.json()
+        except ValueError:
+            err_log.error("Non-JSON response from server on /schedule: status=%d body=%r", resp.status_code, resp.text[:200])
+            await update.message.reply_text("Server returned an unexpected response — try again.")
+            return
     except (httpx.TimeoutException, httpx.RequestError) as e:
         log.error("Schedule command failed: %s", e)
         await update.message.reply_text("Sorry, couldn't reach the Jarvis server. Try again.")
@@ -229,6 +267,7 @@ def create_app() -> Application | None:
     if not token or not allowed_id_int:
         return None
     app = Application.builder().token(token).build()
+    app.add_error_handler(_handle_error)
     app.add_handler(CommandHandler("away", _handle_away))
     app.add_handler(CommandHandler("back", _handle_back))
     app.add_handler(CommandHandler("approve", _handle_approve))
@@ -247,7 +286,7 @@ async def start_bot() -> None:
         return
     await _app.initialize()
     await _app.start()
-    await _app.updater.start_polling(drop_pending_updates=True)
+    await _app.updater.start_polling(drop_pending_updates=False)
     log.info("Telegram bot started (polling)")
 
 

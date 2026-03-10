@@ -33,6 +33,25 @@ async def test_invalid_user_silently_ignored():
     update.message.reply_text.assert_not_called()
 
 
+async def test_busy_response_notifies_user():
+    import telegram_bot
+    with patch("telegram_bot.cfg_module.load", return_value={"telegram": {"bot_token": "x", "allowed_user_id": 111}}):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"busy": True, "command_id": "abc"}
+        with patch("telegram_bot.httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_cls.return_value = mock_client
+            update = _make_update(user_id=111, text="hello")
+            await telegram_bot._handle_message(update, _make_context())
+    # First call is the ACK, second is the busy notice.
+    assert update.message.reply_text.await_count == 2
+    last_reply = update.message.reply_text.call_args[0][0]
+    assert "busy" in last_reply.lower()
+
+
 async def test_valid_user_sets_chat_id():
     import telegram_bot
     with patch("telegram_bot.cfg_module.load", return_value={"telegram": {"bot_token": "x", "allowed_user_id": 111}}):
@@ -62,7 +81,9 @@ async def test_valid_message_sends_reply():
             mock_cls.return_value = mock_client
             update = _make_update(user_id=111, text="list files")
             await telegram_bot._handle_message(update, _make_context())
-    update.message.reply_text.assert_awaited_once_with("here are your files")
+    # First call is the ACK ("⏳ On it..."), second is the actual reply.
+    assert update.message.reply_text.await_count == 2
+    update.message.reply_text.assert_awaited_with("here are your files")
 
 
 async def test_approval_required_stores_pending():
@@ -136,7 +157,9 @@ async def test_approve_with_pending():
             await telegram_bot._handle_approve(update, _make_context())
     assert telegram_state.get_state().pending_command is None
     assert telegram_state.get_state().pending_tool_use_id is None
-    update.message.reply_text.assert_awaited_once_with("done")
+    # First call is the ACK ("⏳ On it..."), second is the actual reply.
+    assert update.message.reply_text.await_count == 2
+    update.message.reply_text.assert_awaited_with("done")
 
 
 async def test_approve_no_pending():
@@ -209,7 +232,8 @@ async def test_handle_schedule_forwards_to_pipeline(schedule_update):
         from telegram_bot import _handle_schedule
         await _handle_schedule(schedule_update, context)
 
-    schedule_update.message.reply_text.assert_called_once()
+    # First call is the ACK ("⏳ On it..."), second is the actual reply.
+    assert schedule_update.message.reply_text.call_count == 2
     text = schedule_update.message.reply_text.call_args[0][0]
     assert "Scheduled morning summary daily at 9am." in text
 
