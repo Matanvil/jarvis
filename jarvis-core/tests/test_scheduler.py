@@ -111,3 +111,15 @@ def test_start_skips_disabled_schedules(mock_store, mock_pipeline):
     s.start()
     assert s._apscheduler.get_job(added.id) is None
     s.stop()
+
+
+def test_run_job_handles_pipeline_exception(sched, mock_pipeline):
+    mock_pipeline.submit.side_effect = RuntimeError("pipeline exploded")
+    with patch("scheduler.send_telegram_result") as mock_send:
+        s = sched.create("cmd", "label", "recurring", "0 9 * * *", None)
+        sched.run_job(s.id)  # should not raise
+        mock_send.assert_called_once()
+        _, kwargs = mock_send.call_args
+        # error arg is passed positionally: send_telegram_result(label, response, error)
+        args = mock_send.call_args[0]
+        assert "pipeline exploded" in args[2]  # error is 3rd positional arg

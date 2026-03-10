@@ -32,7 +32,7 @@ def send_telegram_result(label: str, response: str, error: str | None) -> None:
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            asyncio.ensure_future(_send())
+            asyncio.run_coroutine_threadsafe(_send(), loop)
         else:
             loop.run_until_complete(_send())
     except Exception as e:
@@ -97,19 +97,16 @@ class Scheduler:
         self._execute(schedule_id)
 
     def _register(self, s: Schedule) -> None:
-        if s.schedule_type == "recurring" and s.cron:
-            parts = s.cron.split()
-            trigger = CronTrigger(
-                minute=parts[0],
-                hour=parts[1],
-                day=parts[2],
-                month=parts[3],
-                day_of_week=parts[4],
-            )
-        elif s.schedule_type == "one_time" and s.run_at_iso:
-            trigger = DateTrigger(run_date=datetime.fromisoformat(s.run_at_iso))
-        else:
-            log.warning("Cannot register schedule %s — missing cron/run_at_iso", s.id)
+        try:
+            if s.schedule_type == "recurring" and s.cron:
+                trigger = CronTrigger.from_crontab(s.cron)
+            elif s.schedule_type == "one_time" and s.run_at_iso:
+                trigger = DateTrigger(run_date=datetime.fromisoformat(s.run_at_iso))
+            else:
+                log.warning("Cannot register schedule %s — missing cron/run_at_iso", s.id)
+                return
+        except (ValueError, KeyError) as e:
+            log.error("Invalid trigger for schedule %s: %s", s.id, e)
             return
 
         self._apscheduler.add_job(
