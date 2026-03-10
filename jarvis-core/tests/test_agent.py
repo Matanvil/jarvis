@@ -376,3 +376,100 @@ def test_first_tool_call_is_milestone(tmp_path, monkeypatch):
         result = agent.run("read test file")
 
     assert result["steps"][0]["milestone"] is True
+
+
+# --- Schedule tool tests ---
+
+@pytest.fixture
+def haiku_agent():
+    return make_agent()
+
+
+def test_handle_schedule_tool_create(haiku_agent):
+    from schedule_store import Schedule
+    from datetime import datetime, timezone
+    import scheduler as sched_module
+
+    sample = Schedule(
+        id="abc123", label="morning summary", command="summarise my calendar",
+        schedule_type="recurring", cron="0 9 * * *", run_at_iso=None,
+        enabled=True, created_at=datetime.now(timezone.utc).isoformat(), output="telegram",
+    )
+    mock_sched = MagicMock()
+    mock_sched.create.return_value = sample
+
+    with patch.object(sched_module, "_scheduler", mock_sched):
+        from agent import _handle_schedule_tool
+        result = _handle_schedule_tool("create_schedule", {
+            "command": "summarise my calendar",
+            "label": "morning summary",
+            "schedule_type": "recurring",
+            "cron": "0 9 * * *",
+            "run_at_iso": None,
+        })
+    assert result["id"] == "abc123"
+    assert result["label"] == "morning summary"
+
+
+def test_handle_schedule_tool_list(haiku_agent):
+    import scheduler as sched_module
+    mock_sched = MagicMock()
+    mock_sched.list.return_value = []
+    with patch.object(sched_module, "_scheduler", mock_sched):
+        from agent import _handle_schedule_tool
+        result = _handle_schedule_tool("list_schedules", {})
+    assert result == {"schedules": []}
+
+
+def test_handle_schedule_tool_delete(haiku_agent):
+    import scheduler as sched_module
+    mock_sched = MagicMock()
+    mock_sched.delete.return_value = True
+    with patch.object(sched_module, "_scheduler", mock_sched):
+        from agent import _handle_schedule_tool
+        result = _handle_schedule_tool("delete_schedule", {"schedule_id": "abc123"})
+    assert result["ok"] is True
+
+
+def test_handle_schedule_tool_pause(haiku_agent):
+    from schedule_store import Schedule
+    from datetime import datetime, timezone
+    import scheduler as sched_module
+
+    sample = Schedule(
+        id="abc123", label="l", command="c", schedule_type="recurring", cron="0 9 * * *",
+        run_at_iso=None, enabled=False, created_at=datetime.now(timezone.utc).isoformat(),
+        output="telegram",
+    )
+    mock_sched = MagicMock()
+    mock_sched.pause.return_value = sample
+    with patch.object(sched_module, "_scheduler", mock_sched):
+        from agent import _handle_schedule_tool
+        result = _handle_schedule_tool("pause_schedule", {"schedule_id": "abc123"})
+    assert result["enabled"] is False
+
+
+def test_handle_schedule_tool_resume(haiku_agent):
+    from schedule_store import Schedule
+    from datetime import datetime, timezone
+    import scheduler as sched_module
+
+    sample = Schedule(
+        id="abc123", label="l", command="c", schedule_type="recurring", cron="0 9 * * *",
+        run_at_iso=None, enabled=True, created_at=datetime.now(timezone.utc).isoformat(),
+        output="telegram",
+    )
+    mock_sched = MagicMock()
+    mock_sched.resume.return_value = sample
+    with patch.object(sched_module, "_scheduler", mock_sched):
+        from agent import _handle_schedule_tool
+        result = _handle_schedule_tool("resume_schedule", {"schedule_id": "abc123"})
+    assert result["enabled"] is True
+
+
+def test_handle_schedule_tool_no_scheduler():
+    import scheduler as sched_module
+    with patch.object(sched_module, "_scheduler", None):
+        from agent import _handle_schedule_tool
+        result = _handle_schedule_tool("list_schedules", {})
+    assert "error" in result
