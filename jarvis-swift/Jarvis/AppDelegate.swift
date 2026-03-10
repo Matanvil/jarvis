@@ -180,9 +180,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Permissions
 
+    private static let knownInstallPaths = [
+        "/Applications/Jarvis.app",
+        NSHomeDirectory() + "/Applications/Jarvis.app",
+    ]
+
     private func installToApplicationsIfNeeded() {
         let appPath = Bundle.main.bundlePath
-        guard !appPath.hasPrefix("/Applications/") else { return }
+        let fm = FileManager.default
+        // Skip if already running from a standard Applications folder, or if a copy is already
+        // installed there (e.g. running a dev build while the app is installed in /Applications).
+        guard !Self.knownInstallPaths.contains(where: { appPath.hasPrefix($0) }),
+              !Self.knownInstallPaths.contains(where: { fm.fileExists(atPath: $0) }) else { return }
 
         let dest = "/Applications/Jarvis.app"
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -223,6 +232,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func checkFullDiskAccess() {
         // Full Disk Access is required for Jarvis to read/write files anywhere on disk.
+        // Only relevant for production installs — dev builds in DerivedData never have FDA
+        // so the probe would always fail, causing the dialog to appear on every Xcode build.
+        guard Self.knownInstallPaths.contains(where: { Bundle.main.bundlePath.hasPrefix($0) }) else { return }
         // Probe a TCC-protected path — readable only with FDA granted.
         let probe = "/Library/Application Support/com.apple.TCC/TCC.db"
         guard !FileManager.default.isReadableFile(atPath: probe) else { return }
