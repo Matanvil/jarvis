@@ -34,8 +34,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         healthTimer?.invalidate()
-        if let pid = pythonProcess?.processIdentifier, pid > 0 {
-            kill(pid, SIGKILL)
+        if let proc = pythonProcess, proc.processIdentifier > 0 {
+            proc.terminate()  // SIGTERM — give uvicorn a chance to flush
+            let done = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async { proc.waitUntilExit(); done.signal() }
+            if done.wait(timeout: .now() + 1.5) == .timedOut {
+                kill(proc.processIdentifier, SIGKILL)
+            }
         }
         pythonProcess = nil
     }
@@ -68,7 +73,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startPythonCore() {
-        DispatchQueue.main.async {
+        DispatchQueue.global(qos: .userInitiated).async {
             // Kill our tracked process if any
             if let pid = self.pythonProcess?.processIdentifier, pid > 0 {
                 kill(pid, SIGKILL)
@@ -76,12 +81,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.pythonProcess = nil
 
             // Kill any orphaned process still holding port 8765 (e.g. from a previous run)
+            // waitUntilExit() is safe here — we're on a background queue
             self.killOrphanedServer()
 
             let coreDir = self.resolveCoreDirectory()
-
-            let venvPython = coreDir
-                .appendingPathComponent(".venv/bin/python")
+            let venvPython = coreDir.appendingPathComponent(".venv/bin/python")
 
             guard FileManager.default.fileExists(atPath: venvPython.path) else {
                 NSLog("[Jarvis] Python venv not found at %@", venvPython.path)
@@ -100,8 +104,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             do {
                 try process.run()
-                self.pythonProcess = process
-                NSLog("[Jarvis] Python core started (pid %d)", process.processIdentifier)
+                DispatchQueue.main.async {
+                    self.pythonProcess = process
+                    NSLog("[Jarvis] Python core started (pid %d)", process.processIdentifier)
+                }
             } catch {
                 NSLog("[Jarvis] Failed to start Python core: %@", error.localizedDescription)
             }
