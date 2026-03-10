@@ -7,6 +7,7 @@ class TelegramState:
     chat_id: int | None = None
     pending_command: str | None = None
     pending_tool_use_id: str | None = None
+    pending_category: str | None = None
 
 
 _state = TelegramState()

@@ -59,6 +59,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if ar:
         state.pending_command = update.message.text
         state.pending_tool_use_id = ar.get("tool_use_id")
+        state.pending_category = ar.get("category", "")
         action = ar.get("description", "this action")
         await update.message.reply_text(
             f"Approval required: {action}\nReply /approve or /deny"
@@ -104,8 +105,8 @@ async def _handle_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                         json={
                             "tool_use_id": tool_use_id,
                             "approved": True,
-                            "trust_session": False,
-                            "category": "",
+                            "trust_session": True,
+                            "category": state.pending_category or "",
                         },
                     )
                     resp = await client.post(
@@ -185,6 +186,7 @@ async def _handle_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if ar:
         state.pending_command = text
         state.pending_tool_use_id = ar.get("tool_use_id")
+        state.pending_category = ar.get("category", "")
         action = ar.get("description", "this scheduled task")
         await update.message.reply_text(f"Approval required: {action}\nReply /approve or /deny")
     else:
