@@ -39,11 +39,14 @@ class ScheduleStore:
                 s = Schedule(**item)
                 self._schedules[s.id] = s
         except Exception as e:
-            log.error("Failed to load schedules: %s", e)
+            log.error("Failed to load schedules from %s: %s", self._path, e)
 
     def _save(self):
         data = {"schedules": [asdict(s) for s in self._schedules.values()]}
-        self._path.write_text(json.dumps(data, indent=2))
+        try:
+            self._path.write_text(json.dumps(data, indent=2))
+        except OSError as e:
+            log.error("Failed to save schedules to %s: %s", self._path, e)
 
     def list_all(self) -> list[Schedule]:
         return list(self._schedules.values())
@@ -58,6 +61,7 @@ class ScheduleStore:
         schedule_type: str,
         cron: str | None,
         run_at_iso: str | None,
+        output: str = "telegram",
     ) -> Schedule:
         s = Schedule(
             id=uuid.uuid4().hex[:8],
@@ -68,7 +72,7 @@ class ScheduleStore:
             run_at_iso=run_at_iso,
             enabled=True,
             created_at=datetime.now(timezone.utc).isoformat(),
-            output="telegram",
+            output=output,
         )
         self._schedules[s.id] = s
         self._save()
@@ -86,7 +90,8 @@ class ScheduleStore:
         if s is None:
             return None
         for k, v in kwargs.items():
-            if hasattr(s, k):
-                setattr(s, k, v)
+            if not hasattr(s, k):
+                raise ValueError(f"Unknown schedule field: {k!r}")
+            setattr(s, k, v)
         self._save()
         return s

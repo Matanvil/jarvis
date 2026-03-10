@@ -77,3 +77,19 @@ def test_get_by_id(tmp_store):
 
 def test_get_nonexistent_returns_none(tmp_store):
     assert tmp_store.get("bad") is None
+
+
+def test_update_persists_to_disk(tmp_path):
+    store_path = tmp_path / "schedules.json"
+    with patch("schedule_store.SCHEDULES_PATH", str(store_path)):
+        s1 = ScheduleStore()
+        s = s1.add("cmd", "label", "recurring", "0 9 * * *", None)
+        s1.update(s.id, enabled=False)
+        s2 = ScheduleStore()  # reload
+        assert s2.get(s.id).enabled is False
+
+
+def test_update_unknown_key_raises(tmp_store):
+    s = tmp_store.add("cmd", "label", "recurring", "0 9 * * *", None)
+    with pytest.raises(ValueError, match="Unknown schedule field"):
+        tmp_store.update(s.id, nonexistent_field="value")
