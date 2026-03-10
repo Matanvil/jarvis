@@ -34,7 +34,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         healthTimer?.invalidate()
-        pythonProcess?.terminate()
+        if let proc = pythonProcess, proc.processIdentifier > 0 {
+            proc.terminate()  // SIGTERM — give uvicorn a chance to flush
+            let done = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async { proc.waitUntilExit(); done.signal() }
+            if done.wait(timeout: .now() + 1.5) == .timedOut {
+                kill(proc.processIdentifier, SIGKILL)
+            }
+        }
+        pythonProcess = nil
     }
 
     // MARK: - Python Core
@@ -56,15 +64,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return fallback
     }
 
+    private func killOrphanedServer() {
+        let cleanup = Process()
+        cleanup.executableURL = URL(fileURLWithPath: "/bin/sh")
+        cleanup.arguments = ["-c", "lsof -ti :8765 | xargs kill -9 2>/dev/null || true"]
+        try? cleanup.run()
+        cleanup.waitUntilExit()
+    }
+
     private func startPythonCore() {
-        DispatchQueue.main.async {
-            self.pythonProcess?.terminate()
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Kill our tracked process if any
+            if let pid = self.pythonProcess?.processIdentifier, pid > 0 {
+                kill(pid, SIGKILL)
+            }
             self.pythonProcess = nil
 
-            let coreDir = self.resolveCoreDirectory()
+            // Kill any orphaned process still holding port 8765 (e.g. from a previous run)
+            // waitUntilExit() is safe here — we're on a background queue
+            self.killOrphanedServer()
 
-            let venvPython = coreDir
-                .appendingPathComponent(".venv/bin/python")
+            let coreDir = self.resolveCoreDirectory()
+            let venvPython = coreDir.appendingPathComponent(".venv/bin/python")
 
             guard FileManager.default.fileExists(atPath: venvPython.path) else {
                 NSLog("[Jarvis] Python venv not found at %@", venvPython.path)
@@ -83,8 +104,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             do {
                 try process.run()
-                self.pythonProcess = process
-                NSLog("[Jarvis] Python core started (pid %d)", process.processIdentifier)
+                DispatchQueue.main.async {
+                    self.pythonProcess = process
+                    NSLog("[Jarvis] Python core started (pid %d)", process.processIdentifier)
+                }
             } catch {
                 NSLog("[Jarvis] Failed to start Python core: %@", error.localizedDescription)
             }
