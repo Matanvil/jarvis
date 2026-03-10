@@ -34,7 +34,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         healthTimer?.invalidate()
-        pythonProcess?.terminate()
+        if let pid = pythonProcess?.processIdentifier, pid > 0 {
+            kill(pid, SIGKILL)
+        }
+        pythonProcess = nil
     }
 
     // MARK: - Python Core
@@ -56,10 +59,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return fallback
     }
 
+    private func killOrphanedServer() {
+        let cleanup = Process()
+        cleanup.executableURL = URL(fileURLWithPath: "/bin/sh")
+        cleanup.arguments = ["-c", "lsof -ti :8765 | xargs kill -9 2>/dev/null || true"]
+        try? cleanup.run()
+        cleanup.waitUntilExit()
+    }
+
     private func startPythonCore() {
         DispatchQueue.main.async {
-            self.pythonProcess?.terminate()
+            // Kill our tracked process if any
+            if let pid = self.pythonProcess?.processIdentifier, pid > 0 {
+                kill(pid, SIGKILL)
+            }
             self.pythonProcess = nil
+
+            // Kill any orphaned process still holding port 8765 (e.g. from a previous run)
+            self.killOrphanedServer()
 
             let coreDir = self.resolveCoreDirectory()
 
