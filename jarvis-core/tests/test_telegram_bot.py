@@ -193,7 +193,7 @@ async def test_handle_schedule_forwards_to_pipeline(schedule_update):
     context.bot.send_chat_action = AsyncMock()
 
     mock_resp = MagicMock()
-    mock_resp.json.return_value = {"response": "Scheduled morning summary daily at 9am.", "error": None}
+    mock_resp.json.return_value = {"display": "Scheduled morning summary daily at 9am.", "speak": "Scheduled.", "error": None}
 
     with patch("telegram_bot._validate", new=AsyncMock(return_value=True)), \
          patch("telegram_bot.get_state") as mock_state, \
@@ -211,7 +211,7 @@ async def test_handle_schedule_forwards_to_pipeline(schedule_update):
 
     schedule_update.message.reply_text.assert_called_once()
     text = schedule_update.message.reply_text.call_args[0][0]
-    assert "Scheduled" in text
+    assert "Scheduled morning summary daily at 9am." in text
 
 
 @pytest.mark.asyncio

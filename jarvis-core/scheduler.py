@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -9,7 +10,7 @@ from schedule_store import Schedule, ScheduleStore
 log = logging.getLogger("jarvis.scheduler")
 
 
-def send_telegram_result(label: str, response: str, error: str | None) -> None:
+def send_telegram_result(label: str, response: str, error: str | None, loop=None) -> None:
     """Send scheduled task result to Telegram."""
     from telegram_bot import get_bot
     from telegram_state import get_state
@@ -30,11 +31,12 @@ def send_telegram_result(label: str, response: str, error: str | None) -> None:
         await bot.send_message(chat_id=state.chat_id, text=text)
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
+        if loop is not None and loop.is_running():
             asyncio.run_coroutine_threadsafe(_send(), loop)
         else:
-            loop.run_until_complete(_send())
+            # Fallback for tests / non-async contexts
+            import asyncio as _asyncio
+            _asyncio.run(_send())
     except Exception as e:
         log.error("Failed to send scheduled result to Telegram: %s", e)
 
@@ -44,8 +46,13 @@ class Scheduler:
         self.store = store
         self._pipeline = pipeline
         self._apscheduler = BackgroundScheduler()
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def start(self):
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
         self._apscheduler.start()
         for s in self.store.list_all():
             if s.enabled:
@@ -124,10 +131,10 @@ class Scheduler:
         log.info("Running scheduled task '%s': %s", s.label, s.command)
         try:
             result = self._pipeline.submit(s.command, source="scheduled")
-            send_telegram_result(s.label, result.get("response", ""), result.get("error"))
+            send_telegram_result(s.label, result.get("display") or result.get("speak", ""), result.get("error"), loop=self._loop)
         except Exception as e:
             log.error("Scheduled task '%s' failed: %s", s.label, e)
-            send_telegram_result(s.label, "", str(e))
+            send_telegram_result(s.label, "", str(e), loop=self._loop)
 
         if s.schedule_type == "one_time":
             self.store.update(schedule_id, enabled=False)

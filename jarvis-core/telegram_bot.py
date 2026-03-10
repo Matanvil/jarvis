@@ -173,11 +173,11 @@ async def _handle_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
-                "http://127.0.0.1:8765/command",
+                f"{_SERVER_URL}/command",
                 json={"text": text, "source": "telegram"},
             )
         result = resp.json()
-        response_text = result.get("response") or result.get("error") or "Done."
+        response_text = result.get("display") or result.get("speak") or result.get("error") or "Done."
     except (httpx.TimeoutException, httpx.RequestError) as e:
         log.error("Schedule command failed: %s", e)
         response_text = "Sorry, couldn't reach the Jarvis server. Try again."

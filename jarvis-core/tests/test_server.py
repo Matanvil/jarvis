@@ -446,3 +446,10 @@ def test_create_schedule_no_scheduler(client):
             "run_at_iso": None,
         })
     assert resp.status_code == 503
+
+
+def test_patch_schedule_not_found(client, mock_scheduler):
+    mock_scheduler.pause.return_value = None
+    with patch.object(sched_module, "_scheduler", mock_scheduler):
+        resp = client.patch("/schedules/bad", json={"enabled": False})
+    assert resp.status_code == 404
