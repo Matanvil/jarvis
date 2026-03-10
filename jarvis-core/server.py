@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import json
 import logging
@@ -63,9 +64,22 @@ async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
     _ensure_ollama_running()
     _pipeline, _loggers, _guardrails = load_dependencies()
-    await start_bot()
+    # Defer bot start until the server is accepting connections.
+    # start_bot() before yield risks a message arriving before the HTTP server binds.
+    bot_task = asyncio.create_task(_deferred_bot_start())
     yield
+    bot_task.cancel()
+    try:
+        await bot_task
+    except asyncio.CancelledError:
+        pass
     await stop_bot()
+
+
+async def _deferred_bot_start():
+    # uvicorn typically binds in <100ms; 500ms gives comfortable headroom.
+    await asyncio.sleep(0.5)
+    await start_bot()
 
 
 app = FastAPI(lifespan=lifespan)
