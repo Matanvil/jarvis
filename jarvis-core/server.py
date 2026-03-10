@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, field_validator
 
 import config as cfg_module
@@ -18,6 +18,9 @@ from router import Router
 from telegram_bot import start_bot, stop_bot
 from notifications import notify
 import telegram_state
+import scheduler as sched_module
+from scheduler import Scheduler, get_scheduler
+from schedule_store import ScheduleStore
 
 _pipeline = None
 _loggers = None
@@ -31,7 +34,8 @@ def load_dependencies():
     router = Router(config=config, guardrails=guardrails)
     from memory import ProjectMemory
     pipeline = CommandPipeline(router=router, memory=ProjectMemory())
-    return pipeline, loggers, guardrails
+    store = ScheduleStore()
+    return pipeline, loggers, guardrails, store
 
 
 def _ensure_ollama_running() -> None:
@@ -63,9 +67,10 @@ def _ensure_ollama_running() -> None:
 async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
     _ensure_ollama_running()
-    _pipeline, _loggers, _guardrails = load_dependencies()
-    # Defer bot start until the server is accepting connections.
-    # start_bot() before yield risks a message arriving before the HTTP server binds.
+    _pipeline, _loggers, _guardrails, store = load_dependencies()
+    scheduler = Scheduler(store=store, pipeline=_pipeline)
+    sched_module.set_scheduler(scheduler)
+    scheduler.start()
     bot_task = asyncio.create_task(_deferred_bot_start())
     yield
     bot_task.cancel()
@@ -74,6 +79,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
     await stop_bot()
+    scheduler.stop()
 
 
 async def _deferred_bot_start():
@@ -294,6 +300,59 @@ def update_config(updates: dict):
     merged = _deep_merge(current, updates)
     cfg_module.save(merged)
     return {"saved": True}
+
+
+class CreateScheduleRequest(BaseModel):
+    command: str
+    label: str
+    schedule_type: str
+    cron: str | None = None
+    run_at_iso: str | None = None
+
+
+class PatchScheduleRequest(BaseModel):
+    enabled: bool
+
+
+@app.get("/schedules")
+def list_schedules():
+    s = get_scheduler()
+    if s is None:
+        return {"schedules": []}
+    from dataclasses import asdict
+    return {"schedules": [asdict(x) for x in s.list()]}
+
+
+@app.post("/schedules")
+def create_schedule(req: CreateScheduleRequest):
+    s = get_scheduler()
+    if s is None:
+        raise HTTPException(status_code=503, detail="Scheduler not running")
+    from dataclasses import asdict
+    schedule = s.create(req.command, req.label, req.schedule_type, req.cron, req.run_at_iso)
+    return asdict(schedule)
+
+
+@app.delete("/schedules/{schedule_id}")
+def delete_schedule(schedule_id: str):
+    s = get_scheduler()
+    if s is None:
+        raise HTTPException(status_code=503, detail="Scheduler not running")
+    if not s.delete(schedule_id):
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"ok": True}
+
+
+@app.patch("/schedules/{schedule_id}")
+def update_schedule(schedule_id: str, req: PatchScheduleRequest):
+    s = get_scheduler()
+    if s is None:
+        raise HTTPException(status_code=503, detail="Scheduler not running")
+    from dataclasses import asdict
+    result = s.resume(schedule_id) if req.enabled else s.pause(schedule_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return asdict(result)
 
 
 if __name__ == "__main__":

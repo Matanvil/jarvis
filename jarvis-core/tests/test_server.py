@@ -343,3 +343,87 @@ def test_telegram_command_does_not_disable_away(client):
         resp = client.post("/command", json={"text": "list files", "source": "telegram"})
     assert resp.status_code == 200
     assert telegram_state.get_state().away is True
+
+
+# --- Scheduler endpoint tests ---
+
+from dataclasses import asdict
+from datetime import datetime, timezone
+import scheduler as sched_module
+from schedule_store import Schedule
+
+
+@pytest.fixture
+def sample_schedule():
+    return Schedule(
+        id="abc123",
+        label="morning summary",
+        command="summarise my calendar",
+        schedule_type="recurring",
+        cron="0 9 * * *",
+        run_at_iso=None,
+        enabled=True,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        output="telegram",
+    )
+
+
+@pytest.fixture
+def mock_scheduler(sample_schedule):
+    s = MagicMock()
+    s.list.return_value = [sample_schedule]
+    s.create.return_value = sample_schedule
+    s.delete.return_value = True
+    s.pause.return_value = sample_schedule
+    s.resume.return_value = sample_schedule
+    return s
+
+
+def test_get_schedules(client, mock_scheduler):
+    with patch.object(sched_module, "_scheduler", mock_scheduler):
+        resp = client.get("/schedules")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["schedules"]) == 1
+    assert data["schedules"][0]["id"] == "abc123"
+
+
+def test_create_schedule(client, mock_scheduler):
+    with patch.object(sched_module, "_scheduler", mock_scheduler):
+        resp = client.post("/schedules", json={
+            "command": "summarise my calendar",
+            "label": "morning summary",
+            "schedule_type": "recurring",
+            "cron": "0 9 * * *",
+            "run_at_iso": None,
+        })
+    assert resp.status_code == 200
+    assert resp.json()["id"] == "abc123"
+
+
+def test_delete_schedule(client, mock_scheduler):
+    with patch.object(sched_module, "_scheduler", mock_scheduler):
+        resp = client.delete("/schedules/abc123")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+
+def test_delete_schedule_not_found(client, mock_scheduler):
+    mock_scheduler.delete.return_value = False
+    with patch.object(sched_module, "_scheduler", mock_scheduler):
+        resp = client.delete("/schedules/bad")
+    assert resp.status_code == 404
+
+
+def test_patch_schedule_pause(client, mock_scheduler):
+    with patch.object(sched_module, "_scheduler", mock_scheduler):
+        resp = client.patch("/schedules/abc123", json={"enabled": False})
+    assert resp.status_code == 200
+    mock_scheduler.pause.assert_called_once_with("abc123")
+
+
+def test_patch_schedule_resume(client, mock_scheduler):
+    with patch.object(sched_module, "_scheduler", mock_scheduler):
+        resp = client.patch("/schedules/abc123", json={"enabled": True})
+    assert resp.status_code == 200
+    mock_scheduler.resume.assert_called_once_with("abc123")
