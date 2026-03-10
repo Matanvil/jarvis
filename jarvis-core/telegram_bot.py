@@ -96,26 +96,35 @@ async def _handle_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     tool_use_id = state.pending_tool_use_id
     pending_cmd = state.pending_command
     try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{_SERVER_URL}/approve",
-                json={
-                    "tool_use_id": tool_use_id,
-                    "approved": True,
-                    "trust_session": False,
-                    "category": "",
-                },
-            )
-            resp = await client.post(
-                f"{_SERVER_URL}/command",
-                json={"text": pending_cmd, "source": "telegram"},
-                timeout=60.0,
-            )
-            data = resp.json()
-        reply = data.get("display") or data.get("speak") or data.get("error") or "Done."
-        await update.message.reply_text(reply)
-    except (httpx.RequestError, httpx.TimeoutException):
-        await update.message.reply_text("Server unavailable — is Jarvis running?")
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        f"{_SERVER_URL}/approve",
+                        json={
+                            "tool_use_id": tool_use_id,
+                            "approved": True,
+                            "trust_session": False,
+                            "category": "",
+                        },
+                    )
+                    resp = await client.post(
+                        f"{_SERVER_URL}/command",
+                        json={"text": pending_cmd, "source": "telegram"},
+                        timeout=120.0,
+                    )
+                    data = resp.json()
+                reply = data.get("display") or data.get("speak") or data.get("error") or "Done."
+                await update.message.reply_text(reply)
+                break
+            except httpx.TimeoutException:
+                await update.message.reply_text("Jarvis is taking too long — command may still be running.")
+                break
+            except httpx.RequestError:
+                if attempt == 0:
+                    await asyncio.sleep(2)
+                    continue
+                await update.message.reply_text("Server unavailable — is Jarvis running?")
     finally:
         state.pending_command = None
         state.pending_tool_use_id = None
