@@ -39,7 +39,7 @@ def test_submit_returns_result_with_command_id(pipeline, mock_router):
 
 def test_submit_calls_router_with_text_and_cwd(pipeline, mock_router):
     pipeline.submit("list files", cwd="/my/project", source="hotkey")
-    mock_router.process.assert_called_once_with("list files", cwd="/my/project", memory_context="")
+    mock_router.process.assert_called_once_with("list files", cwd="/my/project", memory_context="", source="hotkey")
 
 
 def test_submit_marks_command_completed(pipeline):

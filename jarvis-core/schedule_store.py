@@ -63,6 +63,20 @@ class ScheduleStore:
         run_at_iso: str | None,
         output: str = "telegram",
     ) -> Schedule:
+        if schedule_type == "one_time" and run_at_iso:
+            try:
+                run_at_dt = datetime.fromisoformat(run_at_iso)
+                now = datetime.now(timezone.utc)
+                # Make run_at_dt timezone-aware for comparison
+                if run_at_dt.tzinfo is None:
+                    run_at_dt = run_at_dt.replace(tzinfo=timezone.utc)
+                if run_at_dt <= now:
+                    raise ValueError(
+                        f"run_at_iso must be a future datetime (got {run_at_iso!r}, "
+                        f"current UTC time is {now.isoformat()})"
+                    )
+            except (ValueError, TypeError) as e:
+                raise ValueError(str(e)) from e
         s = Schedule(
             id=uuid.uuid4().hex[:8],
             label=label,

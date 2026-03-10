@@ -177,11 +177,19 @@ async def _handle_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 json={"text": text, "source": "telegram"},
             )
         result = resp.json()
-        response_text = result.get("display") or result.get("speak") or result.get("error") or "Done."
     except (httpx.TimeoutException, httpx.RequestError) as e:
         log.error("Schedule command failed: %s", e)
-        response_text = "Sorry, couldn't reach the Jarvis server. Try again."
-    await update.message.reply_text(response_text)
+        await update.message.reply_text("Sorry, couldn't reach the Jarvis server. Try again.")
+        return
+    ar = result.get("approval_required")
+    if ar:
+        state.pending_command = text
+        state.pending_tool_use_id = ar.get("tool_use_id")
+        action = ar.get("description", "this scheduled task")
+        await update.message.reply_text(f"Approval required: {action}\nReply /approve or /deny")
+    else:
+        response_text = result.get("display") or result.get("speak") or result.get("error") or "Done."
+        await update.message.reply_text(response_text)
 
 
 async def _handle_schedules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

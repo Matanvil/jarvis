@@ -1,7 +1,9 @@
 import anthropic
+import json
 import logging
 import os
-from guardrails import Guardrails
+from datetime import datetime
+from guardrails import Action, Decision, Guardrails
 from tools.shell import ShellTool
 from tools.web import WebTool
 from tools.code import CodeTool, SUPPORTED_LANGUAGES
@@ -238,7 +240,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "create_schedule",
-        "description": "Schedule a Jarvis command to run on a recurring or one-time basis. Always generate a short human-readable label summarising what the task does. For recurring tasks provide a 5-field cron expression. For one-time tasks provide run_at_iso as an ISO 8601 datetime string. Always confirm with the user what you are scheduling before calling this tool.",
+        "description": "Schedule a Jarvis command to run on a recurring or one-time basis. Store the command exactly as the user stated it — do not pre-compute responses or transform it. Always generate a short human-readable label. For recurring tasks provide a 5-field cron expression (e.g. '0 9 * * *'). For one-time tasks compute run_at_iso from the current datetime in the system prompt plus any offset the user specified (e.g. 'in 2 minutes' → current time + 2 min as ISO 8601 local time). run_at_iso MUST be a future datetime.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -352,22 +354,30 @@ class Agent:
         self._logger = logging.getLogger("jarvis.commands")
         self._local_agent = local_agent
 
-    def _build_system_prompt(self, cwd: str | None, memory_context: str = "") -> str:
+    def _build_system_prompt(self, cwd: str | None, memory_context: str = "", source: str = "") -> str:
         prompt = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~"))
+        prompt += f"\nCurrent local datetime: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         if cwd:
             prompt += f"\nActive project directory: {cwd}\n"
         if memory_context:
             prompt += f"\nProject memory: {memory_context}\n"
+        if source == "scheduled":
+            prompt += (
+                "\nThis command is running as a SCHEDULED TASK. "
+                "Return your response as plain text — it will be sent directly to the user via Telegram. "
+                "Do NOT use macOS notification tools. Just answer or do the task and return the result as text.\n"
+            )
         return prompt
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
-            history: list | None = None, ollama_available: bool = True) -> dict:
+            history: list | None = None, ollama_available: bool = True,
+            source: str = "") -> dict:
         """Run the agent loop. cwd sets the active project directory for all tool calls.
         Returns dict with speak, display, and optional approval_required."""
         messages = [*(history or []), {"role": "user", "content": user_text}]
         tool_calls_made = []
         steps = []
-        system_prompt = self._build_system_prompt(cwd, memory_context)
+        system_prompt = self._build_system_prompt(cwd, memory_context, source)
 
         max_steps = self._config.get("reasoning", {}).get("max_steps_claude", 5)
         max_total = self._config.get("reasoning", {}).get("max_total_steps", 20)
@@ -432,7 +442,21 @@ class Agent:
 
                 try:
                     if block.name in SCHEDULE_TOOLS:
-                        result = _handle_schedule_tool(block.name, block.input)
+                        if block.name == "create_schedule":
+                            cron = block.input.get("cron")
+                            run_at = block.input.get("run_at_iso")
+                            timing = f"cron '{cron}'" if cron else f"at {run_at}"
+                            label = block.input.get("label", "")
+                            command = block.input.get("command", "")
+                            action = Action(
+                                "schedule_create",
+                                f"Schedule '{label}' to run '{command}' ({timing})",
+                            )
+                            if self._guardrails.classify(action) == Decision.REQUIRE_APPROVAL:
+                                raise ApprovalRequiredError(
+                                    "create_schedule", action.description, "schedule_create"
+                                )
+                        result = json.dumps(_handle_schedule_tool(block.name, block.input))
                     else:
                         result = execute_tool(
                             block.name, block.input,

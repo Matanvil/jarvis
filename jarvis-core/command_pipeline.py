@@ -92,7 +92,7 @@ class CommandPipeline:
 
         try:
             cmd.status = CommandStatus.ROUTING
-            result = self._router.process(text, cwd=cwd, memory_context=memory_context)
+            result = self._router.process(text, cwd=cwd, memory_context=memory_context, source=source)
             cmd.status = CommandStatus.COMPLETED
             cmd.result = result
             cmd.completed_at = time.time()
