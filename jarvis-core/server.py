@@ -78,8 +78,10 @@ async def lifespan(app: FastAPI):
         await bot_task
     except asyncio.CancelledError:
         pass
-    await stop_bot()
-    scheduler.stop()
+    try:
+        await stop_bot()
+    finally:
+        scheduler.stop()
 
 
 async def _deferred_bot_start():

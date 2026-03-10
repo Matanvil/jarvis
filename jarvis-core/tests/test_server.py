@@ -427,3 +427,22 @@ def test_patch_schedule_resume(client, mock_scheduler):
         resp = client.patch("/schedules/abc123", json={"enabled": True})
     assert resp.status_code == 200
     mock_scheduler.resume.assert_called_once_with("abc123")
+
+
+def test_get_schedules_no_scheduler(client):
+    with patch.object(sched_module, "_scheduler", None):
+        resp = client.get("/schedules")
+    assert resp.status_code == 200
+    assert resp.json() == {"schedules": []}
+
+
+def test_create_schedule_no_scheduler(client):
+    with patch.object(sched_module, "_scheduler", None):
+        resp = client.post("/schedules", json={
+            "command": "cmd",
+            "label": "label",
+            "schedule_type": "recurring",
+            "cron": "0 9 * * *",
+            "run_at_iso": None,
+        })
+    assert resp.status_code == 503
