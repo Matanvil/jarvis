@@ -7,8 +7,10 @@ enum CoreStatus {
 final class MenuBarController {
     private let statusItem: NSStatusItem
     private var awayModeItem: NSMenuItem?
+    private let onRestart: () -> Void
 
-    init() {
+    init(onRestart: @escaping () -> Void) {
+        self.onRestart = onRestart
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setupButton()
         setupMenu()
@@ -28,6 +30,9 @@ final class MenuBarController {
         )
         newConvo.target = self
         menu.addItem(newConvo)
+        let restart = NSMenuItem(title: "Restart Server", action: #selector(restartServer), keyEquivalent: "")
+        restart.target = self
+        menu.addItem(restart)
         menu.addItem(NSMenuItem.separator())
         let awayItem = NSMenuItem(
             title: "Away mode",
@@ -48,6 +53,10 @@ final class MenuBarController {
         statusItem.menu = menu
     }
 
+    @objc private func restartServer() {
+        onRestart()
+    }
+
     @objc private func toggleAway(_ sender: NSMenuItem) {
         let willBeAway = sender.state == .off
         let payload: [String: Bool] = ["away": willBeAway]
@@ -57,7 +66,7 @@ final class MenuBarController {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
-        URLSession.shared.dataTask(with: req) { [weak self] _, response, error in
+        URLSession.shared.dataTask(with: req) { _, response, error in
             guard error == nil,
                   let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode) else { return }
