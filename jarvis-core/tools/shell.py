@@ -1,6 +1,7 @@
 import fnmatch
 import subprocess
 from pathlib import Path
+import os
 
 
 class ShellTool:
@@ -117,3 +118,9 @@ class ShellTool:
             }
         except Exception as e:
             return {"entries": [], "error": str(e)}
+        
+    def file_create(self, path: str, content: str):
+        if os.path.exists(path):
+            raise FileExistsError(path)
+        
+        self.write_file(path, content)
