@@ -9,10 +9,12 @@ enum HUDState: Equatable {
     case approval(description: String)
     case approved
     case denied
+    case minimized
 
     var preferredHeight: CGFloat {
         switch self {
         case .hidden:                   return 60
+        case .minimized:                return 72
         case .listening, .thinking,
              .executing, .approved,
              .denied:                   return 60

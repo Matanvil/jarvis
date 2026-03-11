@@ -80,6 +80,9 @@ struct HUDView: View {
 
         case .denied:
             HUDStatusRow(icon: "xmark.circle.fill", label: "Denied", spinning: false)
+
+        case .minimized:
+            EmptyView()
         }
     }
 }
