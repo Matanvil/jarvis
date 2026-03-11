@@ -229,8 +229,6 @@ async def command(req: CommandRequest):
             except Exception as exc:
                 logging.getLogger("jarvis.errors").exception("Unhandled error in /command bg")
                 dispatcher.error("I'm experiencing an error. Please try again or restart Jarvis.")
-            finally:
-                _dispatchers.pop(command_id, None)
 
         asyncio.create_task(_run_bg())
         return {"command_id": command_id}

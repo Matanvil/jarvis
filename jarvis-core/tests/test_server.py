@@ -499,3 +499,27 @@ def test_events_endpoint_returns_404_for_unknown_command_id(client_and_agent):
     assert resp.status_code == 200
     data = resp.json()
     assert "error" in data
+
+
+@pytest.mark.asyncio
+async def test_command_bg_error_dispatches_error_event():
+    """When background task raises exception, SSE receives error event."""
+    import asyncio
+    from httpx import AsyncClient, ASGITransport
+    from server import app, _dispatchers
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with patch("server._pipeline") as mock_pipeline:
+            mock_pipeline.is_busy.return_value = False
+            mock_pipeline.submit.side_effect = Exception("boom")
+            resp = await client.post("/command", json={"text": "crash", "source": "hotkey"})
+        assert resp.status_code == 200
+        command_id = resp.json().get("command_id")
+        assert command_id is not None
+        # Give background task time to run
+        await asyncio.sleep(0.05)
+        # Dispatcher should still be in _dispatchers (not removed by _run_bg)
+        dispatcher = _dispatchers.get(command_id)
+        assert dispatcher is not None
+        # Queue should have an error event
+        event = dispatcher.queue.get_nowait()
+        assert event["type"] == "error"
