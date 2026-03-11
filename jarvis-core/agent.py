@@ -330,6 +330,31 @@ def _handle_schedule_tool(tool_name: str, tool_input: dict) -> dict:
 
 _MILESTONE_TOOLS = {"delegate_to_local", "delegate_to_claude_code"}
 
+_STEP_LABELS: dict[str, str] = {
+    "shell_run": "Running command",
+    "file_read": "Reading file",
+    "file_edit": "Editing file",
+    "file_write": "Editing file",
+    "web_search": "Searching the web",
+    "web_fetch": "Fetching page",
+    "find_files": "Searching files",
+    "list_dir": "Listing directory",
+    "run_code": "Running code",
+    "delegate_to_local": "Thinking locally",
+    "delegate_to_claude_code": "Delegating to Claude Code",
+    "create_schedule": "Creating schedule",
+    "list_schedules": "Listing schedules",
+    "delete_schedule": "Deleting schedule",
+    "notify": "Sending notification",
+    "open_app": "Opening app",
+    "get_clipboard": "Reading clipboard",
+    "set_clipboard": "Writing clipboard",
+}
+
+
+def _step_label(tool_name: str) -> str:
+    return _STEP_LABELS.get(tool_name, "Working…")
+
 
 def _is_milestone(tool_name: str, step_index: int) -> bool:
     """True if this step should trigger voice narration."""

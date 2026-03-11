@@ -473,3 +473,19 @@ def test_handle_schedule_tool_no_scheduler():
         from agent import _handle_schedule_tool
         result = _handle_schedule_tool("list_schedules", {})
     assert "error" in result
+
+
+from agent import _step_label
+
+def test_step_label_known_tools():
+    assert _step_label("shell_run") == "Running command"
+    assert _step_label("file_read") == "Reading file"
+    assert _step_label("file_edit") == "Editing file"
+    assert _step_label("file_write") == "Editing file"
+    assert _step_label("web_search") == "Searching the web"
+    assert _step_label("delegate_to_local") == "Thinking locally"
+    assert _step_label("delegate_to_claude_code") == "Delegating to Claude Code"
+    assert _step_label("create_schedule") == "Creating schedule"
+
+def test_step_label_unknown_tool():
+    assert _step_label("some_future_tool") == "Working\u2026"
