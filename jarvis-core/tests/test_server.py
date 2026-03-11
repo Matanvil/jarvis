@@ -47,13 +47,13 @@ def test_command_endpoint_returns_speak_and_display(client_and_agent):
 def test_command_endpoint_calls_agent_with_cwd(client_and_agent):
     client, mock_router, _ = client_and_agent
     client.post("/command", json={"text": "open safari", "cwd": "/my/project"})
-    mock_router.process.assert_called_once_with("open safari", cwd="/my/project", memory_context="", source="hotkey")
+    mock_router.process.assert_called_once_with("open safari", cwd="/my/project", memory_context="", source="hotkey", step_callback=None)
 
 
 def test_command_endpoint_cwd_defaults_to_none(client_and_agent):
     client, mock_router, _ = client_and_agent
     client.post("/command", json={"text": "hello"})
-    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey")
+    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey", step_callback=None)
 
 
 def test_approve_endpoint_trusts_session(client_and_agent):
@@ -225,7 +225,7 @@ def test_empty_cwd_string_normalized_to_none(client_and_agent):
     """If Swift sends cwd='', it should be treated as None, not passed as empty string."""
     client, mock_router, _ = client_and_agent
     client.post("/command", json={"text": "hello", "cwd": ""})
-    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey")
+    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey", step_callback=None)
 
 
 def test_get_config_redacts_api_keys(client_and_agent, tmp_path):

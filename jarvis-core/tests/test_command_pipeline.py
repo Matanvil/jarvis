@@ -39,7 +39,7 @@ def test_submit_returns_result_with_command_id(pipeline, mock_router):
 
 def test_submit_calls_router_with_text_and_cwd(pipeline, mock_router):
     pipeline.submit("list files", cwd="/my/project", source="hotkey")
-    mock_router.process.assert_called_once_with("list files", cwd="/my/project", memory_context="", source="hotkey")
+    mock_router.process.assert_called_once_with("list files", cwd="/my/project", memory_context="", source="hotkey", step_callback=None)
 
 
 def test_submit_marks_command_completed(pipeline):
@@ -114,3 +114,15 @@ def test_list_returns_recent_commands(pipeline):
 
 def test_get_returns_none_for_unknown_id(pipeline):
     assert pipeline.get("nonexistent") is None
+
+
+# ── step_callback passthrough ──────────────────────────────────────────────────
+
+def test_pipeline_passes_step_callback_to_router():
+    cb = MagicMock()
+    mock_router = MagicMock()
+    mock_router.process.return_value = {"speak": "ok", "display": "ok", "steps": []}
+    pipeline = CommandPipeline(router=mock_router)
+    pipeline.submit("hello", step_callback=cb)
+    mock_router.process.assert_called_once()
+    assert mock_router.process.call_args.kwargs.get("step_callback") == cb

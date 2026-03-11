@@ -63,7 +63,7 @@ class CommandPipeline:
                     break
         self._registry[cmd.id] = cmd
 
-    def submit(self, text: str, cwd: str | None = None, source: str = "hotkey") -> dict:
+    def submit(self, text: str, cwd: str | None = None, source: str = "hotkey", step_callback=None) -> dict:
         """Submit a command. Returns busy response if another command is executing."""
         if self._executing:
             return {"busy": True, "command_id": self._current_command_id}
@@ -92,7 +92,7 @@ class CommandPipeline:
 
         try:
             cmd.status = CommandStatus.ROUTING
-            result = self._router.process(text, cwd=cwd, memory_context=memory_context, source=source)
+            result = self._router.process(text, cwd=cwd, memory_context=memory_context, source=source, step_callback=step_callback)
             cmd.status = CommandStatus.COMPLETED
             cmd.result = result
             cmd.completed_at = time.time()
