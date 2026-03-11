@@ -406,7 +406,7 @@ class Agent:
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
             history: list | None = None, ollama_available: bool = True,
-            source: str = "") -> dict:
+            source: str = "", step_callback=None) -> dict:
         """Run the agent loop. cwd sets the active project directory for all tool calls.
         Returns dict with speak, display, and optional approval_required."""
         messages = [*(history or []), {"role": "user", "content": user_text}]
@@ -474,6 +474,14 @@ class Agent:
                     "result_summary": "",
                 }
                 steps.append(step)
+
+                if step["milestone"] and step_callback is not None:
+                    step_callback({
+                        "type": "step",
+                        "label": _step_label(block.name),
+                        "tool": block.name,
+                        "milestone": True,
+                    })
 
                 try:
                     if block.name in SCHEDULE_TOOLS:
