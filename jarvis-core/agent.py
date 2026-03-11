@@ -345,6 +345,9 @@ _STEP_LABELS: dict[str, str] = {
     "create_schedule": "Creating schedule",
     "list_schedules": "Listing schedules",
     "delete_schedule": "Deleting schedule",
+    "pause_schedule": "Pausing schedule",
+    "resume_schedule": "Resuming schedule",
+    "search_content": "Searching content",
     "notify": "Sending notification",
     "open_app": "Opening app",
     "get_clipboard": "Reading clipboard",
@@ -353,6 +356,7 @@ _STEP_LABELS: dict[str, str] = {
 
 
 def _step_label(tool_name: str) -> str:
+    """Return a human-readable label for the given tool name, or 'Working…' as fallback."""
     return _STEP_LABELS.get(tool_name, "Working…")
 
 

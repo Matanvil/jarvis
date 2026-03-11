@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from agent import Agent, claude_code_available
+from agent import Agent, claude_code_available, _step_label
 from guardrails import Guardrails, Decision
 from tools._dispatch import execute_tool, format_response
 
@@ -475,8 +475,6 @@ def test_handle_schedule_tool_no_scheduler():
     assert "error" in result
 
 
-from agent import _step_label
-
 def test_step_label_known_tools():
     assert _step_label("shell_run") == "Running command"
     assert _step_label("file_read") == "Reading file"
@@ -486,6 +484,9 @@ def test_step_label_known_tools():
     assert _step_label("delegate_to_local") == "Thinking locally"
     assert _step_label("delegate_to_claude_code") == "Delegating to Claude Code"
     assert _step_label("create_schedule") == "Creating schedule"
+    assert _step_label("pause_schedule") == "Pausing schedule"
+    assert _step_label("resume_schedule") == "Resuming schedule"
+    assert _step_label("search_content") == "Searching content"
 
 def test_step_label_unknown_tool():
     assert _step_label("some_future_tool") == "Working\u2026"
