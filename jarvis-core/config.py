@@ -40,6 +40,7 @@ DEFAULTS = {
     },
     "narration": {
         "mode": "milestones",   # milestones | all | silent
+        "step_voice": False,
     },
     "models": {
         "haiku": "claude-haiku-4-5-20251001",
