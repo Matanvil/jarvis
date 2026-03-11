@@ -27,8 +27,9 @@ class StepDispatcher:
 
     def on_step(self, event: dict) -> None:
         """Called from background thread at each milestone step."""
-        # Push to SSE queue
-        self._enqueue(event)
+        # Push to SSE queue only for non-telegram sources (Telegram path has no SSE consumer)
+        if self.source != "telegram":
+            self._enqueue(event)
 
         # Conditionally notify Telegram
         state = get_state()

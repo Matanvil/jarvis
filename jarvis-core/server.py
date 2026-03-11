@@ -229,6 +229,9 @@ async def command(req: CommandRequest):
             except Exception as exc:
                 logging.getLogger("jarvis.errors").exception("Unhandled error in /command bg")
                 dispatcher.error("I'm experiencing an error. Please try again or restart Jarvis.")
+            finally:
+                # TTL cleanup: if SSE client never connects, remove dispatcher after 30s
+                loop.call_later(30, lambda: _dispatchers.pop(command_id, None))
 
         asyncio.create_task(_run_bg())
         return {"command_id": command_id}

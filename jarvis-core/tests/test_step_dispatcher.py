@@ -65,6 +65,18 @@ def test_telegram_notified_when_away(loop):
     mock_rcts.assert_called_once()
 
 
+def test_telegram_source_does_not_enqueue_to_sse(loop):
+    """Telegram source skips SSE queue push (no consumer exists for that path)."""
+    with patch("step_dispatcher.get_state") as mock_state:
+        mock_state.return_value.away = False
+        mock_state.return_value.chat_id = 123
+        with patch("step_dispatcher.get_bot", return_value=None):
+            dispatcher = StepDispatcher(command_id="cmd1", source="telegram", loop=loop)
+            dispatcher.on_step({"type": "step", "label": "Running command", "tool": "shell_run", "milestone": True})
+            loop.run_until_complete(asyncio.sleep(0))
+    assert dispatcher.queue.empty()
+
+
 def test_complete_pushes_to_queue(loop):
     """complete() pushes complete event to queue."""
     dispatcher = StepDispatcher(command_id="cmd1", source="hotkey", loop=loop)
