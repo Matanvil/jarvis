@@ -317,6 +317,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             controller.sizingOptions = []
         }
         window.contentViewController = controller
+        // NSHostingView has a default opaque background — clear it so the window is fully transparent.
+        controller.view.wantsLayer = true
+        controller.view.layer?.backgroundColor = .clear
         hudController = controller
         hudWindow = window
     }
