@@ -33,6 +33,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         startPythonCore()
         scheduleHealthPoll()
         setupHUD()
+        minimizeHUD()
         audioController.start()
         installToApplicationsIfNeeded()
         checkFullDiskAccess()
