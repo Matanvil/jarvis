@@ -36,8 +36,9 @@ def test_health_endpoint(client_and_agent):
 
 
 def test_command_endpoint_returns_speak_and_display(client_and_agent):
+    # Telegram (blocking path) returns speak/display in HTTP response.
     client, _, _ = client_and_agent
-    response = client.post("/command", json={"text": "create a test file"})
+    response = client.post("/command", json={"text": "create a test file", "source": "telegram"})
     assert response.status_code == 200
     data = response.json()
     assert "speak" in data
@@ -45,15 +46,17 @@ def test_command_endpoint_returns_speak_and_display(client_and_agent):
 
 
 def test_command_endpoint_calls_agent_with_cwd(client_and_agent):
+    from unittest.mock import ANY
     client, mock_router, _ = client_and_agent
     client.post("/command", json={"text": "open safari", "cwd": "/my/project"})
-    mock_router.process.assert_called_once_with("open safari", cwd="/my/project", memory_context="", source="hotkey", step_callback=None)
+    mock_router.process.assert_called_once_with("open safari", cwd="/my/project", memory_context="", source="hotkey", step_callback=ANY)
 
 
 def test_command_endpoint_cwd_defaults_to_none(client_and_agent):
+    from unittest.mock import ANY
     client, mock_router, _ = client_and_agent
     client.post("/command", json={"text": "hello"})
-    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey", step_callback=None)
+    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey", step_callback=ANY)
 
 
 def test_approve_endpoint_trusts_session(client_and_agent):
@@ -84,9 +87,10 @@ def test_approve_denied_returns_cancelled(client_and_agent):
 
 
 def test_command_returns_friendly_error_on_agent_exception(client_and_agent):
+    # Use telegram (blocking path) so the error is returned in the HTTP response.
     client, mock_router, _ = client_and_agent
     mock_router.process.side_effect = RuntimeError("something exploded")
-    response = client.post("/command", json={"text": "do something"})
+    response = client.post("/command", json={"text": "do something", "source": "telegram"})
     assert response.status_code == 200
     data = response.json()
     assert data["speak"] is not None
@@ -95,7 +99,7 @@ def test_command_returns_friendly_error_on_agent_exception(client_and_agent):
 
 
 def test_command_response_includes_agent_metadata(client_and_agent):
-    """Router metadata fields should pass through the /command response."""
+    """Router metadata fields should pass through the /command response (telegram/blocking path)."""
     client, _, _ = client_and_agent
     with patch("server._pipeline") as mock_pipeline:
         mock_pipeline.submit.return_value = {
@@ -104,7 +108,7 @@ def test_command_response_includes_agent_metadata(client_and_agent):
             "_escalated": False, "_escalation_reason": None, "_response_ms": 42,
             "command_id": "test-id",
         }
-        resp = client.post("/command", json={"text": "open Safari"})
+        resp = client.post("/command", json={"text": "open Safari", "source": "telegram"})
     assert resp.status_code == 200
     data = resp.json()
     assert data["speak"] == "Done."
@@ -135,18 +139,20 @@ def test_command_logs_agent_analytics(client_and_agent):
 
 
 def test_command_response_includes_command_id(client_and_agent):
+    # Hotkey (non-blocking) returns a server-generated command_id immediately.
     client, mock_router, _ = client_and_agent
     import server as srv
     from unittest.mock import patch as _patch
     with _patch("server._pipeline") as mock_pipeline:
         mock_pipeline.submit.return_value = {
             "speak": "Done.", "display": "Done.",
-            "command_id": "test-uuid-123",
             "_agent": "ollama",
         }
-        resp = client.post("/command", json={"text": "open Safari"})
+        resp = client.post("/command", json={"text": "open Safari", "source": "hotkey"})
     assert resp.status_code == 200
-    assert resp.json()["command_id"] == "test-uuid-123"
+    data = resp.json()
+    assert "command_id" in data
+    assert data["command_id"]  # non-empty UUID
 
 
 def test_commands_list_endpoint(client_and_agent):
@@ -183,11 +189,12 @@ def test_command_cancel_endpoint(client_and_agent):
 
 
 def test_busy_response_when_pipeline_locked(client_and_agent):
+    # Use telegram (blocking path) to get the busy response directly in the HTTP body.
     client, _, _ = client_and_agent
     from unittest.mock import patch as _patch
     with _patch("server._pipeline") as mock_pipeline:
         mock_pipeline.submit.return_value = {"busy": True, "command_id": "running-id"}
-        resp = client.post("/command", json={"text": "new command"})
+        resp = client.post("/command", json={"text": "new command", "source": "telegram"})
     assert resp.status_code == 200
     assert resp.json()["busy"] is True
 
@@ -223,9 +230,10 @@ def test_get_command_by_id_returns_404_for_unknown(client_and_agent):
 
 def test_empty_cwd_string_normalized_to_none(client_and_agent):
     """If Swift sends cwd='', it should be treated as None, not passed as empty string."""
+    from unittest.mock import ANY
     client, mock_router, _ = client_and_agent
     client.post("/command", json={"text": "hello", "cwd": ""})
-    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey", step_callback=None)
+    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey", step_callback=ANY)
 
 
 def test_get_config_redacts_api_keys(client_and_agent, tmp_path):
@@ -453,3 +461,41 @@ def test_patch_schedule_not_found(client, mock_scheduler):
     with patch.object(sched_module, "_scheduler", mock_scheduler):
         resp = client.patch("/schedules/bad", json={"enabled": False})
     assert resp.status_code == 404
+
+
+# --- SSE / non-blocking POST /command tests ---
+
+def test_command_returns_command_id_for_hotkey(client_and_agent):
+    """POST /command with source=hotkey returns command_id without speak/display."""
+    client, _, _ = client_and_agent
+    with patch("server._pipeline") as mock_pipeline:
+        mock_pipeline.submit.return_value = {
+            "speak": "done", "display": "done", "steps": []
+        }
+        resp = client.post("/command", json={"text": "hello", "source": "hotkey"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "command_id" in data
+    assert data.get("speak") is None
+
+
+def test_command_stays_blocking_for_telegram(client_and_agent):
+    """POST /command with source=telegram returns full result synchronously."""
+    client, _, _ = client_and_agent
+    with patch("server._pipeline") as mock_pipeline:
+        mock_pipeline.submit.return_value = {
+            "speak": "hi", "display": "hello", "steps": []
+        }
+        resp = client.post("/command", json={"text": "hi", "source": "telegram"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("speak") == "hi"
+
+
+def test_events_endpoint_returns_404_for_unknown_command_id(client_and_agent):
+    """GET /events/{command_id} returns error when command_id not found."""
+    client, _, _ = client_and_agent
+    resp = client.get("/events/nonexistent-id")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "error" in data
