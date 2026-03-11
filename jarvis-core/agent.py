@@ -330,6 +330,35 @@ def _handle_schedule_tool(tool_name: str, tool_input: dict) -> dict:
 
 _MILESTONE_TOOLS = {"delegate_to_local", "delegate_to_claude_code"}
 
+_STEP_LABELS: dict[str, str] = {
+    "shell_run": "Running command",
+    "file_read": "Reading file",
+    "file_edit": "Editing file",
+    "file_write": "Editing file",
+    "web_search": "Searching the web",
+    "web_fetch": "Fetching page",
+    "find_files": "Searching files",
+    "list_dir": "Listing directory",
+    "run_code": "Running code",
+    "delegate_to_local": "Thinking locally",
+    "delegate_to_claude_code": "Delegating to Claude Code",
+    "create_schedule": "Creating schedule",
+    "list_schedules": "Listing schedules",
+    "delete_schedule": "Deleting schedule",
+    "pause_schedule": "Pausing schedule",
+    "resume_schedule": "Resuming schedule",
+    "search_content": "Searching content",
+    "notify": "Sending notification",
+    "open_app": "Opening app",
+    "get_clipboard": "Reading clipboard",
+    "set_clipboard": "Writing clipboard",
+}
+
+
+def _step_label(tool_name: str) -> str:
+    """Return a human-readable label for the given tool name, or 'Working…' as fallback."""
+    return _STEP_LABELS.get(tool_name, "Working…")
+
 
 def _is_milestone(tool_name: str, step_index: int) -> bool:
     """True if this step should trigger voice narration."""
@@ -377,7 +406,7 @@ class Agent:
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
             history: list | None = None, ollama_available: bool = True,
-            source: str = "") -> dict:
+            source: str = "", step_callback=None) -> dict:
         """Run the agent loop. cwd sets the active project directory for all tool calls.
         Returns dict with speak, display, and optional approval_required."""
         messages = [*(history or []), {"role": "user", "content": user_text}]
@@ -445,6 +474,14 @@ class Agent:
                     "result_summary": "",
                 }
                 steps.append(step)
+
+                if step["milestone"] and step_callback is not None:
+                    step_callback({
+                        "type": "step",
+                        "label": _step_label(block.name),
+                        "tool": block.name,
+                        "milestone": True,
+                    })
 
                 try:
                     if block.name in SCHEDULE_TOOLS:

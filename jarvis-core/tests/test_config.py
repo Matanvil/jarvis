@@ -134,3 +134,9 @@ def test_load_deep_merges_telegram(tmp_config):
     cfg = config.load()
     assert cfg["telegram"]["bot_token"] == "mytoken"
     assert cfg["telegram"]["allowed_user_id"] == 0
+
+
+def test_step_voice_default_is_false():
+    """narration.step_voice defaults to False."""
+    from config import DEFAULTS
+    assert DEFAULTS["narration"]["step_voice"] is False

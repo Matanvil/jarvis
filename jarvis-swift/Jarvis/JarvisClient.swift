@@ -70,6 +70,13 @@ private struct ApprovalClassifyResponse: Codable {
     let approved: Bool?
 }
 
+struct CommandStartResponse: Decodable {
+    let commandId: String
+    private enum CodingKeys: String, CodingKey {
+        case commandId = "command_id"
+    }
+}
+
 // MARK: - Client
 
 final class JarvisClient {
@@ -90,15 +97,21 @@ final class JarvisClient {
         return URLSession(configuration: cfg)
     }()
 
-    func sendCommand(text: String, cwd: String?) async throws -> CommandResponse {
+    /// POSTs to /command with source="swift" and returns command_id immediately.
+    func startCommand(text: String, cwd: String?) async throws -> String {
         var request = URLRequest(url: URL(string: "\(baseURL)/command")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         var body: [String: Any] = ["text": text, "source": "swift"]
         if let cwd { body["cwd"] = cwd }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, _) = try await commandSession.data(for: request)
-        return try JSONDecoder().decode(CommandResponse.self, from: data)
+        // Short timeout — server returns command_id immediately
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 10
+        let session = URLSession(configuration: cfg)
+        let (data, _) = try await session.data(for: request)
+        let resp = try JSONDecoder().decode(CommandStartResponse.self, from: data)
+        return resp.commandId
     }
 
     /// Returns true if caller should re-issue the original command.

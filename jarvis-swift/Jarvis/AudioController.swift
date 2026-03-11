@@ -30,6 +30,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     private var pendingToolUseId: String?
     private var pendingApprovalCategory: String?
     private var lastCommandText: String?
+    private var stepVoiceEnabled: Bool = false
 
     // MARK: - Init
 
@@ -210,15 +211,13 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await client.sendCommand(text: text, cwd: nil)
-                await MainActor.run { self.handleCommandResponse(response) }
+                let commandId = try await client.startCommand(text: text, cwd: nil)
+                await listenToEvents(commandId: commandId)
             } catch {
-                NSLog("[Jarvis] sendCommand failed: %@", error.localizedDescription)
+                NSLog("[Jarvis] startCommand failed: %@", error.localizedDescription)
                 let msg = "I'm having trouble connecting. Please check that Jarvis is running."
-                await MainActor.run {
-                    self.showHUD(.response(text: msg))
-                    self.speak(msg)
-                }
+                showHUD(.response(text: msg))
+                speak(msg)
             }
         }
     }
@@ -265,19 +264,88 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             if shouldReissue, let text = originalCommand {
                 // Re-issue the original command — guardrails now trust the category for this session
                 do {
-                    let response = try await client.sendCommand(text: text, cwd: nil)
-                    await MainActor.run { self.handleCommandResponse(response) }
+                    let commandId = try await client.startCommand(text: text, cwd: nil)
+                    await self.listenToEvents(commandId: commandId)
                 } catch {
                     NSLog("[Jarvis] re-issue after approval failed: %@", error.localizedDescription)
                     let msg = "I'm having trouble connecting. Please check that Jarvis is running."
-                    await MainActor.run {
-                        self.showHUD(.response(text: msg))
-                        self.speak(msg)
-                    }
+                    self.showHUD(.response(text: msg))
+                    self.speak(msg)
                 }
             } else {
-                await MainActor.run { self.hideHUD() }
+                self.hideHUD()
             }
+        }
+    }
+
+    // MARK: - Config
+
+    func refreshConfig() async {
+        guard let url = URL(string: "http://127.0.0.1:8765/config"),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let narration = config["narration"] as? [String: Any]
+        else { return }
+        stepVoiceEnabled = narration["step_voice"] as? Bool ?? false
+    }
+
+    // MARK: - SSE
+
+    private func listenToEvents(commandId: String) async {
+        let stepVoice = stepVoiceEnabled
+        guard let url = URL(string: "http://127.0.0.1:8765/events/\(commandId)") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 180
+
+        do {
+            let (stream, _) = try await URLSession.shared.bytes(for: request)
+            var buffer = ""
+            for try await byte in stream {
+                buffer.append(Character(UnicodeScalar(byte)))
+                if buffer.hasSuffix("\n\n") {
+                    let lines = buffer.components(separatedBy: "\n")
+                    for line in lines {
+                        if line.hasPrefix("data: ") {
+                            let jsonStr = String(line.dropFirst(6))
+                            if let data = jsonStr.data(using: .utf8),
+                               let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                handleSSEEvent(event, stepVoice: stepVoice)
+                            }
+                        }
+                    }
+                    buffer = ""
+                }
+            }
+        } catch {
+            NSLog("[Jarvis] SSE stream error for %@: %@", commandId, error.localizedDescription)
+            showHUD(.response(text: "Lost connection to Jarvis."))
+        }
+    }
+
+    @MainActor
+    private func handleSSEEvent(_ event: [String: Any], stepVoice: Bool) {
+        guard let type = event["type"] as? String else { return }
+        switch type {
+        case "step":
+            let label = event["label"] as? String ?? "Working…"
+            showHUD(.executing(step: label))
+            if stepVoice, let milestone = event["milestone"] as? Bool, milestone {
+                speak(label)
+            }
+        case "complete":
+            if let data = try? JSONSerialization.data(withJSONObject: event),
+               let response = try? JSONDecoder().decode(CommandResponse.self, from: data) {
+                handleCommandResponse(response)
+            } else {
+                let text = event["display"] as? String ?? event["speak"] as? String ?? "Done."
+                showHUD(.response(text: text))
+            }
+        case "error":
+            let msg = event["message"] as? String ?? "Something went wrong."
+            showHUD(.response(text: msg))
+            speak(msg)
+        default:
+            break
         }
     }
 

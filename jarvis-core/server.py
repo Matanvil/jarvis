@@ -6,8 +6,10 @@ import os
 import shutil
 import subprocess
 import time
+import uuid as _uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 import config as cfg_module
@@ -21,10 +23,12 @@ import telegram_state
 import scheduler as sched_module
 from scheduler import Scheduler, get_scheduler
 from schedule_store import ScheduleStore
+from step_dispatcher import StepDispatcher
 
 _pipeline = None
 _loggers = None
 _guardrails = None
+_dispatchers: dict[str, StepDispatcher] = {}
 
 
 def load_dependencies():
@@ -122,40 +126,8 @@ def reset_conversation():
     return {"reset": True}
 
 
-@app.post("/command")
-async def command(req: CommandRequest):
-    import anthropic as _anthropic
-    import asyncio
-    start = time.time()
-    try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, lambda: _pipeline.submit(req.text, cwd=req.cwd, source=req.source)
-        )
-    except _anthropic.RateLimitError:
-        msg = "I've hit the API rate limit. Please wait a moment and try again."
-        logging.getLogger("jarvis.errors").warning("Rate limit hit on /command")
-        duration_ms = int((time.time() - start) * 1000)
-        if _loggers:
-            _loggers["commands"].warning(
-                f"cmd={req.text!r} source={req.source!r} duration_ms={duration_ms} error='rate_limit'"
-            )
-        return {"speak": msg, "display": msg, "steps": []}
-    except Exception as exc:
-        logging.getLogger("jarvis.errors").exception("Unhandled error in /command")
-        duration_ms = int((time.time() - start) * 1000)
-        if _loggers:
-            _loggers["commands"].error(
-                f"cmd={req.text!r} source={req.source!r} duration_ms={duration_ms} error={exc!r}"
-            )
-        msg = "I'm experiencing an error. Please try again or restart Jarvis."
-        return {"speak": msg, "display": msg, "steps": []}
-    # Auto-disable away mode if command came from the Mac (not Telegram)
-    if req.source != "telegram":
-        state = telegram_state.get_state()
-        if state.away:
-            await notify("🟢 Jarvis back at the Mac — away mode off")
-            state.away = False
+def _log_command(req: "CommandRequest", start: float, result: dict) -> None:
+    """Log command analytics and training data."""
     duration_ms = int((time.time() - start) * 1000)
     if _loggers:
         _loggers["commands"].info(
@@ -182,7 +154,108 @@ async def command(req: CommandRequest):
             display=result.get("display"),
             duration_ms=duration_ms,
         )
-    return result
+
+
+async def _handle_away_cancel(req: "CommandRequest") -> None:
+    """Auto-disable away mode if command came from the Mac (not Telegram)."""
+    if req.source != "telegram":
+        state = telegram_state.get_state()
+        if state.away:
+            await notify("🟢 Jarvis back at the Mac — away mode off")
+            state.away = False
+
+
+@app.post("/command")
+async def command(req: CommandRequest):
+    import anthropic as _anthropic
+    start = time.time()
+    command_id = str(_uuid.uuid4())
+    loop = asyncio.get_running_loop()
+
+    if req.source == "telegram":
+        # Blocking path — Telegram bot reads result from HTTP response body
+        dispatcher = StepDispatcher(command_id, req.source, loop)
+        try:
+            result = await loop.run_in_executor(
+                None,
+                lambda: _pipeline.submit(
+                    req.text, cwd=req.cwd, source=req.source,
+                    step_callback=dispatcher.on_step
+                )
+            )
+        except _anthropic.RateLimitError:
+            msg = "I've hit the API rate limit. Please wait a moment and try again."
+            logging.getLogger("jarvis.errors").warning("Rate limit hit on /command")
+            duration_ms = int((time.time() - start) * 1000)
+            if _loggers:
+                _loggers["commands"].warning(
+                    f"cmd={req.text!r} source={req.source!r} duration_ms={duration_ms} error='rate_limit'"
+                )
+            return {"speak": msg, "display": msg, "steps": []}
+        except Exception as exc:
+            logging.getLogger("jarvis.errors").exception("Unhandled error in /command")
+            duration_ms = int((time.time() - start) * 1000)
+            if _loggers:
+                _loggers["commands"].error(
+                    f"cmd={req.text!r} source={req.source!r} duration_ms={duration_ms} error={exc!r}"
+                )
+            msg = "I'm experiencing an error. Please try again or restart Jarvis."
+            return {"speak": msg, "display": msg, "steps": []}
+        _log_command(req, start, result)
+        await _handle_away_cancel(req)
+        return {**result, "command_id": command_id}
+
+    else:
+        # Non-blocking path — Swift reads result from SSE stream
+        dispatcher = StepDispatcher(command_id, req.source, loop)
+        _dispatchers[command_id] = dispatcher
+
+        async def _run_bg():
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: _pipeline.submit(
+                        req.text, cwd=req.cwd, source=req.source,
+                        step_callback=dispatcher.on_step
+                    )
+                )
+                _log_command(req, start, result)
+                await _handle_away_cancel(req)
+                dispatcher.complete(result)
+            except _anthropic.RateLimitError:
+                msg = "I've hit the API rate limit. Please wait a moment and try again."
+                logging.getLogger("jarvis.errors").warning("Rate limit hit on /command bg")
+                dispatcher.error(msg)
+            except Exception as exc:
+                logging.getLogger("jarvis.errors").exception("Unhandled error in /command bg")
+                dispatcher.error("I'm experiencing an error. Please try again or restart Jarvis.")
+            finally:
+                # TTL cleanup: if SSE client never connects, remove dispatcher after 30s
+                loop.call_later(30, lambda: _dispatchers.pop(command_id, None))
+
+        asyncio.create_task(_run_bg())
+        return {"command_id": command_id}
+
+
+@app.get("/events/{command_id}")
+async def events(command_id: str):
+    dispatcher = _dispatchers.get(command_id)
+    if dispatcher is None:
+        return {"error": "command_id not found or already complete"}
+
+    async def stream():
+        try:
+            while True:
+                event = await asyncio.wait_for(dispatcher.queue.get(), timeout=120.0)
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("type") in ("complete", "error"):
+                    break
+        except asyncio.TimeoutError:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'timeout'})}\n\n"
+        finally:
+            _dispatchers.pop(command_id, None)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @app.get("/commands")

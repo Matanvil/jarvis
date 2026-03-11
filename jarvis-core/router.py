@@ -99,7 +99,7 @@ class Router:
             return json.loads(content)
 
     def process(self, text: str, cwd: str | None = None, memory_context: str = "",
-                source: str = "") -> dict:
+                source: str = "", step_callback=None) -> dict:
         """Route a command via pre-flight classifier and return response with metadata."""
         start = time.time()
         mode = self._routing_mode
@@ -121,7 +121,8 @@ class Router:
                           if use_sonnet else
                           self._config.get("models", {}).get("haiku", "claude-haiku-4-5-20251001"))
 
-            result = agent.run(text, cwd=cwd, memory_context=memory_context, history=self._history, source=source)
+            result = agent.run(text, cwd=cwd, memory_context=memory_context, history=self._history, source=source,
+                               step_callback=step_callback)
             self._update_history(text, result)
             return self._annotate(result, agent="claude", model=model_name,
                                   escalated=False, escalation_reason=classification.get("reason"),
@@ -129,7 +130,8 @@ class Router:
 
         # claude_only: skip classifier entirely
         if mode == "claude_only":
-            result = self._claude.run(text, cwd=cwd, memory_context=memory_context, history=self._history, source=source)
+            result = self._claude.run(text, cwd=cwd, memory_context=memory_context, history=self._history, source=source,
+                                      step_callback=step_callback)
             self._update_history(text, result)
             return self._annotate(result, agent="claude", model="claude-sonnet-4-6",
                                   escalated=False, escalation_reason=None,
@@ -170,7 +172,8 @@ class Router:
         # can_handle_locally=False OR Ollama escalated: route to Claude
         # Pass ollama_available=False when escalated so Claude doesn't waste a step on delegate_to_local
         result = self._claude.run(text, cwd=cwd, memory_context=memory_context, history=self._history,
-                                  ollama_available=(escalation_reason is None), source=source)
+                                  ollama_available=(escalation_reason is None), source=source,
+                                  step_callback=step_callback)
         self._update_history(text, result)
         return self._annotate(result, agent="claude", model="claude-sonnet-4-6",
                               escalated=escalation_reason is not None,
