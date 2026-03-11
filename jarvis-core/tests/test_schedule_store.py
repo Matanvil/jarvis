@@ -36,10 +36,10 @@ def test_add_onetime_schedule(tmp_store):
         label="one-time weather check",
         schedule_type="one_time",
         cron=None,
-        run_at_iso="2026-03-11T09:00:00",
+        run_at_iso="2030-01-01T09:00:00",
     )
     assert s.schedule_type == "one_time"
-    assert s.run_at_iso == "2026-03-11T09:00:00"
+    assert s.run_at_iso == "2030-01-01T09:00:00"
     assert s.cron is None
 
 
