@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var hudWindow: HUDWindow?
     private var hudController: NSHostingController<HUDView>?
     private let hudViewModel = HUDViewModel.shared
+    private var lastVisibleState: HUDState = .hidden
     private var menuBarController: MenuBarController?
     private var jarvisClient: JarvisClient!
     private var audioController: AudioController!
@@ -259,8 +260,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showHUD(_ state: HUDState) {
         DispatchQueue.main.async {
+            self.lastVisibleState = state
             self.hudViewModel.state = state
-            self.hudWindow?.resize(toHeight: state.preferredHeight)
+            self.hudWindow?.resizeForExpanded(toHeight: state.preferredHeight)
             self.hudWindow?.orderFront(nil)
         }
     }
@@ -272,18 +274,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func minimizeHUD() {
+        DispatchQueue.main.async {
+            // Remember what we're minimizing from (so expand can restore it).
+            // If lastVisibleState is .hidden (fresh launch, icon saved from prior session),
+            // expand() will no-op — which is safe since there's nothing to restore.
+            if self.hudViewModel.state != .minimized {
+                self.lastVisibleState = self.hudViewModel.state
+            }
+            self.hudViewModel.state = .minimized
+            self.hudWindow?.resizeForMinimized()
+            self.hudWindow?.orderFront(nil)
+        }
+    }
+
+    func expandHUD() {
+        DispatchQueue.main.async {
+            guard self.lastVisibleState != .hidden else { return }
+            let state = self.lastVisibleState
+            self.hudViewModel.state = state
+            self.hudWindow?.resizeForExpanded(toHeight: state.preferredHeight)
+            self.hudWindow?.orderFront(nil)
+        }
+    }
+
     private func setupHUD() {
         let view = HUDView(
             viewModel: hudViewModel,
-            onDismiss: { [weak self] in self?.hideHUD() },
-            onApprove: { [weak self] in self?.handleApprove() },
-            onDeny: { [weak self] in self?.handleDeny() }
+            onDismiss:  { [weak self] in self?.hideHUD() },
+            onMinimize: { [weak self] in self?.minimizeHUD() },
+            onExpand:   { [weak self] in self?.expandHUD() },
+            onApprove:  { [weak self] in self?.handleApprove() },
+            onDeny:     { [weak self] in self?.handleDeny() }
         )
         let window = HUDWindow(viewModel: hudViewModel)
         let controller = NSHostingController(rootView: view)
         // Prevent NSHostingController from resizing the window to match SwiftUI's intrinsic
         // content size (which collapses to ~0 when state=.hidden). Width must be controlled
-        // entirely by HUDWindow.resize(toHeight:).
+        // entirely by HUDWindow.resizeForExpanded(toHeight:).
         if #available(macOS 13.0, *) {
             controller.sizingOptions = []
         }
