@@ -261,6 +261,17 @@ def test_haiku_first_classifier_failure_falls_back_to_haiku(haiku_router, mock_h
     mock_sonnet_agent.run.assert_not_called()
 
 
+def test_router_passes_step_callback_to_agent(haiku_router):
+    """Router forwards step_callback kwarg to agent.run()."""
+    cb = MagicMock()
+    with patch.object(haiku_router._haiku, "run", return_value={
+        "speak": "ok", "display": "ok", "steps": []
+    }) as mock_run:
+        haiku_router.process("hello", step_callback=cb)
+    mock_run.assert_called_once()
+    assert mock_run.call_args.kwargs.get("step_callback") == cb
+
+
 def test_intent_class_destructive_annotated_in_metadata(config):
     """Destructive intent class should appear in response metadata."""
     config["ollama"]["routing_mode"] = "ollama_first"
