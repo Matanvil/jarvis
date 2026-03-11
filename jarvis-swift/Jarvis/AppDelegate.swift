@@ -173,6 +173,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 self.menuBarController?.setStatus(.online)
                 self.menuBarController?.syncAwayState()
+                Task { await self.audioController.refreshConfig() }
             }
         }
         task.resume()
