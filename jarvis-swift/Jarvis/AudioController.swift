@@ -280,7 +280,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     // MARK: - SSE
 
     private func listenToEvents(commandId: String) async {
-        let stepVoice = fetchStepVoiceConfig()
+        let stepVoice = await fetchStepVoiceConfig()
         guard let url = URL(string: "http://127.0.0.1:8765/events/\(commandId)") else { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 180
@@ -337,9 +337,9 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         }
     }
 
-    private func fetchStepVoiceConfig() -> Bool {
+    private func fetchStepVoiceConfig() async -> Bool {
         guard let url = URL(string: "http://127.0.0.1:8765/config"),
-              let data = try? Data(contentsOf: url),
+              let (data, _) = try? await URLSession.shared.data(from: url),
               let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let narration = config["narration"] as? [String: Any],
               let stepVoice = narration["step_voice"] as? Bool

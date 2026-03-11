@@ -97,17 +97,6 @@ final class JarvisClient {
         return URLSession(configuration: cfg)
     }()
 
-    func sendCommand(text: String, cwd: String?) async throws -> CommandResponse {
-        var request = URLRequest(url: URL(string: "\(baseURL)/command")!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        var body: [String: Any] = ["text": text, "source": "swift"]
-        if let cwd { body["cwd"] = cwd }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, _) = try await commandSession.data(for: request)
-        return try JSONDecoder().decode(CommandResponse.self, from: data)
-    }
-
     /// POSTs to /command with source="swift" and returns command_id immediately.
     func startCommand(text: String, cwd: String?) async throws -> String {
         var request = URLRequest(url: URL(string: "\(baseURL)/command")!)
