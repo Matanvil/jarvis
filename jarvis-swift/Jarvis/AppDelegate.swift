@@ -10,7 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastRestartTime: Date = .distantPast
     private var healthTimer: Timer?
     private var hudWindow: HUDWindow?
-    private var hudController: NSHostingController<HUDView>?
+    private var hudView: NSHostingView<HUDView>?
     private let hudViewModel = HUDViewModel.shared
     private var lastVisibleState: HUDState = .hidden
     private var menuBarController: MenuBarController?
@@ -309,18 +309,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             onDeny:     { [weak self] in self?.handleDeny() }
         )
         let window = HUDWindow(viewModel: hudViewModel)
-        let controller = NSHostingController(rootView: view)
-        // Prevent NSHostingController from resizing the window to match SwiftUI's intrinsic
-        // content size (which collapses to ~0 when state=.hidden). Width must be controlled
-        // entirely by HUDWindow.resizeForExpanded(toHeight:).
+        let hostingView = NSHostingView(rootView: view)
+        // Prevent NSHostingView from auto-resizing the window to match SwiftUI's intrinsic size.
+        // Width/height are controlled entirely by HUDWindow.resizeForExpanded/resizeForMinimized.
         if #available(macOS 13.0, *) {
-            controller.sizingOptions = []
+            hostingView.sizingOptions = []
         }
-        window.contentViewController = controller
-        // NSHostingView has a default opaque background — clear it so the window is fully transparent.
-        controller.view.wantsLayer = true
-        controller.view.layer?.backgroundColor = .clear
-        hudController = controller
+        // Use contentView directly (not contentViewController) so the NSPanel's own
+        // transparent/borderless config is not overridden by a view controller.
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 0)
+        window.contentView = hostingView
+        hudView = hostingView
         hudWindow = window
     }
 
