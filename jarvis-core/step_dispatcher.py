@@ -16,17 +16,14 @@ class StepDispatcher:
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=100)
 
     def _enqueue(self, event: dict) -> None:
-        """Thread-safe enqueue: uses call_soon_threadsafe when loop is running, else put_nowait directly."""
-        if self.loop.is_running():
-            try:
-                self.loop.call_soon_threadsafe(self.queue.put_nowait, event)
-            except asyncio.QueueFull:
-                log.warning("Step queue full for command %s — dropping event", self.command_id)
-        else:
+        """Thread-safe enqueue: schedules put_nowait via call_soon_threadsafe."""
+        def _put():
             try:
                 self.queue.put_nowait(event)
             except asyncio.QueueFull:
                 log.warning("Step queue full for command %s — dropping event", self.command_id)
+
+        self.loop.call_soon_threadsafe(_put)
 
     def on_step(self, event: dict) -> None:
         """Called from background thread at each milestone step."""
