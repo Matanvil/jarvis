@@ -16,16 +16,14 @@ final class SettingsWindowController: NSWindowController {
         window.center()
         window.isReleasedWhenClosed = false
         super.init(window: window)
-
-        let view = SettingsView(onDismiss: { [weak self] in
-            self?.close()
-        })
-        window.contentView = NSHostingView(rootView: view)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     func open() {
+        // Swap in a fresh SettingsView so the ViewModel reloads config on every open.
+        let view = SettingsView(onDismiss: { [weak self] in self?.close() })
+        window?.contentView = NSHostingView(rootView: view)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

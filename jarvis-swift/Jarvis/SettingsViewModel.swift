@@ -56,7 +56,15 @@ final class SettingsViewModel: ObservableObject {
     // Snapshot of restart-sensitive values at load time — used to detect changes
     private var loadedRestartValues: [String: String] = [:]
 
-    private let baseURL = "http://127.0.0.1:8765"
+    private var baseURL: String {
+        let configPath = NSHomeDirectory() + "/.jarvis/config.json"
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let port = json["server_port"] as? Int, port > 1024, port <= 65535 else {
+            return "http://127.0.0.1:8765"
+        }
+        return "http://127.0.0.1:\(port)"
+    }
 
     // MARK: - Load
 
