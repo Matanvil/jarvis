@@ -217,6 +217,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             } catch {
                 NSLog("[Jarvis] startCommand failed: %@", error.localizedDescription)
                 let msg = "I'm having trouble connecting. Please check that Jarvis is running."
+                viewModel.finalizeTurn(response: msg)
                 showHUD(.response(text: msg))
                 speak(msg)
             }
@@ -274,6 +275,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
                 } catch {
                     NSLog("[Jarvis] re-issue after approval failed: %@", error.localizedDescription)
                     let msg = "I'm having trouble connecting. Please check that Jarvis is running."
+                    self.viewModel.finalizeTurn(response: msg)
                     self.showHUD(.response(text: msg))
                     self.speak(msg)
                 }
@@ -323,7 +325,9 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             }
         } catch {
             NSLog("[Jarvis] SSE stream error for %@: %@", commandId, error.localizedDescription)
-            showHUD(.response(text: "Lost connection to Jarvis."))
+            let msg = "Lost connection to Jarvis."
+            viewModel.finalizeTurn(response: msg)
+            showHUD(.response(text: msg))
         }
     }
 
