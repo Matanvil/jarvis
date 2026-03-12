@@ -4,8 +4,7 @@ import SwiftUI
 class HUDWindow: NSPanel {
 
     private let screenFrame: NSRect
-    private static let positionKeyFull      = "hudFullPosition"
-    private static let positionKeyMinimized = "hudMinimizedPosition"
+    private static let positionKey = "hudPosition"
 
     private(set) var isMinimized: Bool = false
 
@@ -19,8 +18,17 @@ class HUDWindow: NSPanel {
         let defaultX = screenFrame.midX - width / 2
         let defaultY = screenFrame.minY + 80
 
-        // Load saved full-HUD position if available
-        let savedOrigin = HUDWindow.loadOrigin(forKey: HUDWindow.positionKeyFull)
+        // Migrate legacy separate position keys → single shared key
+        if UserDefaults.standard.object(forKey: Self.positionKey) == nil {
+            let legacyStr = UserDefaults.standard.string(forKey: "hudMinimizedPosition")
+                ?? UserDefaults.standard.string(forKey: "hudFullPosition")
+            if let legacyStr {
+                UserDefaults.standard.set(legacyStr, forKey: Self.positionKey)
+            }
+            UserDefaults.standard.removeObject(forKey: "hudMinimizedPosition")
+            UserDefaults.standard.removeObject(forKey: "hudFullPosition")
+        }
+        let savedOrigin = HUDWindow.loadOrigin(forKey: HUDWindow.positionKey)
         let x = savedOrigin?.x ?? defaultX
         let y = savedOrigin?.y ?? defaultY
 
@@ -59,8 +67,7 @@ class HUDWindow: NSPanel {
     }
 
     private func savePosition() {
-        let key = isMinimized ? Self.positionKeyMinimized : Self.positionKeyFull
-        UserDefaults.standard.set(NSStringFromPoint(frame.origin), forKey: key)
+        UserDefaults.standard.set(NSStringFromPoint(frame.origin), forKey: Self.positionKey)
     }
 
     // MARK: - Minimize / expand sizing
@@ -72,7 +79,7 @@ class HUDWindow: NSPanel {
         isMovableByWindowBackground = false   // tap gestures need priority; drag is handled in mouseDragged
 
         let size = NSSize(width: 72, height: 72)
-        let saved = Self.loadOrigin(forKey: Self.positionKeyMinimized)
+        let saved = Self.loadOrigin(forKey: Self.positionKey)
         let origin = clampedOrigin(saved ?? frame.origin, size: size)
         // Issue #5: animate: false — spec marks collapse/expand animation out of scope.
         setFrame(NSRect(origin: origin, size: size), display: true, animate: false)
@@ -89,7 +96,7 @@ class HUDWindow: NSPanel {
         let width = canonicalWidth
         let size = NSSize(width: width, height: height)
         // Issue #3: restore saved full-HUD position instead of anchoring to reactor origin.
-        let savedOrigin = Self.loadOrigin(forKey: Self.positionKeyFull)
+        let savedOrigin = Self.loadOrigin(forKey: Self.positionKey)
         let origin = smartExpandOrigin(from: savedOrigin ?? frame.origin, targetSize: size)
         // Issue #5: animate: false — spec marks collapse/expand animation out of scope.
         setFrame(NSRect(origin: origin, size: size), display: true, animate: false)
