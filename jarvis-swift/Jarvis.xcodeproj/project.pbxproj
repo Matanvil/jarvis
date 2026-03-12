@@ -16,6 +16,7 @@
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* JarvisClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F3 /* JarvisClient.swift */; };
 		B2C3D4E5F6A7B8C9D0E1F2A3 /* AudioController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A7B8C9D0E1F2A4 /* AudioController.swift */; };
 		F661D252F7E4C5019639C9E1 /* HUDViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14F409752942B73285CEBFE /* HUDViewModel.swift */; };
+		C3D4E5F6A7B8C9D0E1F2A3B4 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D4E5F6A7B8C9D0E1F2A3B5 /* SettingsViewModel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,6 +27,7 @@
 		AFDE0C2B9C763CB14D4860EF /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		B2C3D4E5F6A7B8C9D0E1F2A4 /* AudioController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioController.swift; sourceTree = "<group>"; };
 		B14F409752942B73285CEBFE /* HUDViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDViewModel.swift; sourceTree = "<group>"; };
+		C3D4E5F6A7B8C9D0E1F2A3B5 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		BCD242C83ADE5623EDB958B3 /* Jarvis.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Jarvis.entitlements; sourceTree = "<group>"; };
 		BD65447B9E4C38A85B4132FD /* JarvisApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisApp.swift; sourceTree = "<group>"; };
 		CF188A9690C132DC1EAA28DE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -64,6 +66,7 @@
 				BD65447B9E4C38A85B4132FD /* JarvisApp.swift */,
 				A1B2C3D4E5F6A7B8C9D0E1F3 /* JarvisClient.swift */,
 				AFDE0C2B9C763CB14D4860EF /* MenuBarController.swift */,
+				C3D4E5F6A7B8C9D0E1F2A3B5 /* SettingsViewModel.swift */,
 			);
 			path = Jarvis;
 			sourceTree = "<group>";
@@ -136,6 +139,7 @@
 				5E25349CC3262A18DE554A01 /* JarvisApp.swift in Sources */,
 				A1B2C3D4E5F6A7B8C9D0E1F2 /* JarvisClient.swift in Sources */,
 				4C532BB72DB8492A9CA01EFA /* MenuBarController.swift in Sources */,
+				C3D4E5F6A7B8C9D0E1F2A3B4 /* SettingsViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
