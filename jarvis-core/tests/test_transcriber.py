@@ -31,7 +31,7 @@ def test_transcribe_returns_stripped_text():
     result = transcriber.transcribe("/tmp/audio.ogg")
 
     assert result == "run the tests"
-    mock_model.transcribe.assert_called_once_with("/tmp/audio.ogg")
+    mock_model.transcribe.assert_called_once_with("/tmp/audio.ogg", language="en")
 
 
 def test_transcribe_returns_empty_string_for_whitespace():

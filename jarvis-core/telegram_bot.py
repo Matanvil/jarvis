@@ -138,6 +138,7 @@ async def _handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(str(e))
         return
     except Exception:
+        err_log.exception("Voice transcription failed")
         await update.message.reply_text("Failed to transcribe — try again.")
         return
     finally:
