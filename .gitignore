@@ -21,3 +21,4 @@ jarvis-swift/.DS_Store
 
 # Python venv
 jarvis-core/.venv/
+.superpowers/

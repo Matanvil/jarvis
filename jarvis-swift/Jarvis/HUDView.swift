@@ -128,6 +128,7 @@ struct HUDStatusRow: View {
                     .tint(.white)
             }
         }
+        .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
         .padding(.horizontal, 20)
     }
