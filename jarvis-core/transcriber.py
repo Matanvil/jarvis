@@ -4,6 +4,7 @@ Load the model once at startup with load(), then call transcribe() per audio fil
 """
 
 import os
+import re
 
 # Whisper calls ffmpeg as a subprocess. The server process launched by the Swift app
 # does not inherit the user's shell PATH, so Homebrew binaries are not visible.
@@ -39,6 +40,5 @@ def transcribe(audio_path: str) -> str:
     result = _model.transcribe(audio_path, language="en")
     text = result["text"].strip()
     # Remove Whisper special tokens (e.g. <|nn|>, <|en|>) that occasionally leak into output
-    import re
     text = re.sub(r"<\|[^|]*\|>", "", text).strip()
     return text
