@@ -2,30 +2,52 @@ import SwiftUI
 
 struct HUDView: View {
     @ObservedObject var viewModel: HUDViewModel
-    var onDismiss: () -> Void = {}
-    var onApprove: () -> Void = {}
-    var onDeny: () -> Void = {}
+    var onDismiss:  () -> Void = {}
+    var onMinimize: () -> Void = {}
+    var onExpand:   () -> Void = {}
+    var onApprove:  () -> Void = {}
+    var onDeny:     () -> Void = {}
+
+    @State private var isHovered = false
 
     var body: some View {
         Group {
-            if viewModel.state != .hidden {
+            if viewModel.state == .minimized {
+                // Arc reactor icon — tap to expand
+                ArcReactorView()
+                    .onTapGesture(perform: onExpand)
+            } else if viewModel.state != .hidden {
                 ZStack(alignment: .topTrailing) {
                     contentView
                         .frame(maxWidth: .infinity)
                         .background(
                             RoundedRectangle(cornerRadius: 20)
                                 .fill(.ultraThinMaterial)
-                                .shadow(color: .black.opacity(0.3), radius: 20, y: 8)
                         )
 
-                    Button(action: onDismiss) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.white.opacity(0.6))
+                    // Hover-reveal button row: minimize (−) then close (✕)
+                    HStack(spacing: 6) {
+                        Button(action: onMinimize) {
+                            Image(systemName: "minus.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(
+                                    Color(red: 0.22, green: 0.74, blue: 0.97).opacity(0.85)
+                                )
+                        }
+                        .buttonStyle(.plain)
+
+                        Button(action: onDismiss) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(.white.opacity(0.6))
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                     .padding(10)
+                    .opacity(isHovered ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.15), value: isHovered)
                 }
+                .onHover { isHovered = $0 }
                 .padding(8)
             }
         }
@@ -35,7 +57,7 @@ struct HUDView: View {
     @ViewBuilder
     private var contentView: some View {
         switch viewModel.state {
-        case .hidden:
+        case .hidden, .minimized:
             EmptyView()
 
         case .listening:

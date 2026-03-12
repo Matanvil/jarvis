@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1A2B3C4D5E6F7A8B9C0D1E2F /* ArcReactorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B3C4D5E6F7A8B9C0D1E2F3A /* ArcReactorView.swift */; };
 		4C532BB72DB8492A9CA01EFA /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFDE0C2B9C763CB14D4860EF /* MenuBarController.swift */; };
 		5E25349CC3262A18DE554A01 /* JarvisApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD65447B9E4C38A85B4132FD /* JarvisApp.swift */; };
 		67C0FA63859E57CDAD3386B0 /* HUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 827BD974D1EDA53447ABD677 /* HUDView.swift */; };
@@ -18,6 +19,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		2B3C4D5E6F7A8B9C0D1E2F3A /* ArcReactorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArcReactorView.swift; sourceTree = "<group>"; };
 		54CCBC142B08F40AAF2803FF /* HUDWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDWindow.swift; sourceTree = "<group>"; };
 		827BD974D1EDA53447ABD677 /* HUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D0E1F3 /* JarvisClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisClient.swift; sourceTree = "<group>"; };
@@ -51,6 +53,7 @@
 		FC737B8F8A91C66ADA6702EE /* Jarvis */ = {
 			isa = PBXGroup;
 			children = (
+				2B3C4D5E6F7A8B9C0D1E2F3A /* ArcReactorView.swift */,
 				CF188A9690C132DC1EAA28DE /* AppDelegate.swift */,
 				B2C3D4E5F6A7B8C9D0E1F2A4 /* AudioController.swift */,
 				827BD974D1EDA53447ABD677 /* HUDView.swift */,
@@ -124,6 +127,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1A2B3C4D5E6F7A8B9C0D1E2F /* ArcReactorView.swift in Sources */,
 				9DC43759D0969F2E2310C9B0 /* AppDelegate.swift in Sources */,
 				B2C3D4E5F6A7B8C9D0E1F2A3 /* AudioController.swift in Sources */,
 				67C0FA63859E57CDAD3386B0 /* HUDView.swift in Sources */,
