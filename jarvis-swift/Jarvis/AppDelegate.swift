@@ -126,7 +126,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     let configPath = NSHomeDirectory() + "/.jarvis/config.json"
                     guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                          let p = json["server_port"] as? Int else { return 8765 }
+                          let p = json["server_port"] as? Int, p > 1024, p <= 65535 else { return 8765 }
                     return p
                 }()
 
@@ -184,7 +184,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkHealth() {
-        guard let url = URL(string: "http://127.0.0.1:8765/health") else { return }
+        let port: Int = {
+            let configPath = NSHomeDirectory() + "/.jarvis/config.json"
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let p = json["server_port"] as? Int, p > 1024, p <= 65535 else { return 8765 }
+            return p
+        }()
+        guard let url = URL(string: "http://127.0.0.1:\(port)/health") else { return }
 
         let request = URLRequest(url: url, timeoutInterval: 5)
         let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
