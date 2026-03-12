@@ -65,7 +65,8 @@ final class SettingsViewModel: ObservableObject {
         saveError = nil
         defer { isLoading = false }
         guard let url = URL(string: "\(baseURL)/config") else { return }
-        guard let (data, _) = try? await URLSession.shared.data(from: url),
+        guard let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             saveError = "Could not load config — is Jarvis running?"
             return
