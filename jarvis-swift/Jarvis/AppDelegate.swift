@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Foundation
 import SwiftUI
+import UserNotifications
 
 /// NSHostingView subclass whose backing layer is non-opaque from creation.
 /// This prevents the rendering pipeline from filling the layer content bitmap
@@ -32,6 +33,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var jarvisClient: JarvisClient!
     private var audioController: AudioController!
     private var cancellables = Set<AnyCancellable>()
+    private var alertListenerTask: Task<Void, Never>?
 
     // MARK: - Lifecycle
 
@@ -69,12 +71,68 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         minimizeHUD()
         audioController.start()
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        startAlertListener()
         installToApplicationsIfNeeded()
         checkFullDiskAccess()
     }
 
+    // MARK: - Alert Listener
+
+    private func startAlertListener() {
+        alertListenerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.connectAlertStream()
+                // Wait before reconnecting (Python may still be starting)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
+
+    private func connectAlertStream() async {
+        guard let url = URL(string: "http://127.0.0.1:8765/alerts") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 300
+        do {
+            let (stream, _) = try await URLSession.shared.bytes(for: request)
+            var buffer = ""
+            for try await byte in stream {
+                guard !Task.isCancelled else { return }
+                buffer.append(Character(UnicodeScalar(byte)))
+                if buffer.hasSuffix("\n\n") {
+                    for line in buffer.components(separatedBy: "\n") where line.hasPrefix("data: ") {
+                        let jsonStr = String(line.dropFirst(6))
+                        guard let data = jsonStr.data(using: .utf8),
+                              let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              event["type"] as? String == "alert",
+                              let title = event["title"] as? String,
+                              let body = event["body"] as? String else { continue }
+                        await showLocalNotification(title: title, body: body)
+                    }
+                    buffer = ""
+                }
+            }
+        } catch {
+            // Connection refused while Python is starting is expected — don't log
+            let msg = error.localizedDescription
+            if !msg.contains("Connection refused") && !msg.contains("cancelled") {
+                NSLog("[Jarvis] Alert stream error: %@", msg)
+            }
+        }
+    }
+
+    private func showLocalNotification(title: String, body: String) async {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        try? await UNUserNotificationCenter.current().add(req)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         isTerminating = true
+        alertListenerTask?.cancel()
         healthTimer?.invalidate()
         hudViewModel.saveSessionSync()
         if let proc = pythonProcess, proc.processIdentifier > 0 {
