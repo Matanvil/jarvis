@@ -88,20 +88,19 @@ class HUDWindow: NSPanel {
     }
 
     /// Expand to full-width pill at the given height.
-    /// Restores the saved full-HUD position; falls back to current origin if none saved.
+    /// Anchors to the saved icon position so the HUD always expands near where the icon lives.
     func resizeForExpanded(toHeight height: CGFloat) {
         isMinimized = false
         isMovableByWindowBackground = true
 
         let width = canonicalWidth
         let size = NSSize(width: width, height: height)
-        // Issue #3: restore saved full-HUD position instead of anchoring to reactor origin.
-        let savedOrigin = Self.loadOrigin(forKey: Self.positionKey)
-        let origin = smartExpandOrigin(from: savedOrigin ?? frame.origin, targetSize: size)
+        // Icon position is the source of truth — expand from it, don't overwrite it.
+        let iconOrigin = Self.loadOrigin(forKey: Self.positionKey)
+        let origin = smartExpandOrigin(from: iconOrigin ?? frame.origin, targetSize: size)
         // Issue #5: animate: false — spec marks collapse/expand animation out of scope.
         setFrame(NSRect(origin: origin, size: size), display: true, animate: false)
         applyContentMask(circle: false, size: size)
-        savePosition()
     }
 
     /// Mask the content view's layer to match the visible shape —
@@ -185,9 +184,6 @@ class HUDWindow: NSPanel {
 // MARK: - NSWindowDelegate
 
 extension HUDWindow: NSWindowDelegate {
-    /// Save position whenever the user finishes dragging the full HUD.
-    func windowDidMove(_ notification: Notification) {
-        guard !isMinimized else { return }   // minimized drag is saved in mouseUp
-        savePosition()
-    }
+    // Position is persisted only when the icon is dragged (mouseUp above).
+    // HUD drag does not update the icon anchor — the icon always returns to its saved spot.
 }
