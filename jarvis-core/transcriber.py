@@ -6,12 +6,15 @@ Load the model once at startup with load(), then call transcribe() per audio fil
 import os
 import re
 
-# Whisper calls ffmpeg as a subprocess. The server process launched by the Swift app
-# does not inherit the user's shell PATH, so Homebrew binaries are not visible.
-# Prepend common Homebrew locations so ffmpeg can be found at transcription time.
-for _bin in ("/opt/homebrew/bin", "/usr/local/bin"):
-    if os.path.isdir(_bin) and _bin not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = _bin + ":" + os.environ.get("PATH", "")
+# Whisper calls ffmpeg as a subprocess. Use the ffmpeg binary bundled with
+# imageio-ffmpeg so no system ffmpeg install is required (works in DMG distribution).
+try:
+    import imageio_ffmpeg
+    _ffmpeg_dir = os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
+    if _ffmpeg_dir not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _ffmpeg_dir + ":" + os.environ.get("PATH", "")
+except Exception:
+    pass  # fall back to whatever ffmpeg is on PATH
 
 _model = None  # module-level cache; loaded once at startup
 
