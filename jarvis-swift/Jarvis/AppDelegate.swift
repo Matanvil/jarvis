@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 
@@ -30,6 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private var jarvisClient: JarvisClient!
     private var audioController: AudioController!
+    private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Lifecycle
 
@@ -40,6 +42,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onSettings: {
                 SettingsWindowController.shared.open()
+            },
+            onNewConversation: { [weak self] in
+                self?.hudViewModel.newConversation()
             }
         )
         jarvisClient = JarvisClient()
@@ -52,6 +57,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         startPythonCore()
         scheduleHealthPoll()
         setupHUD()
+
+        // Observe contentHeight to resize the HUD window as the thread grows
+        hudViewModel.$contentHeight
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] height in
+                guard let self, self.hudViewModel.state != .minimized, self.hudViewModel.state != .hidden else { return }
+                self.hudWindow?.resizeForExpanded(toHeight: height)
+            }
+            .store(in: &cancellables)
+
         minimizeHUD()
         audioController.start()
         installToApplicationsIfNeeded()
@@ -61,6 +76,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         isTerminating = true
         healthTimer?.invalidate()
+        hudViewModel.saveSessionSync()
         if let proc = pythonProcess, proc.processIdentifier > 0 {
             proc.terminate()  // SIGTERM — give uvicorn a chance to flush
             let done = DispatchSemaphore(value: 0)
@@ -303,7 +319,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async {
             self.lastVisibleState = state
             self.hudViewModel.state = state
-            self.hudWindow?.resizeForExpanded(toHeight: state.preferredHeight)
+            self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
             self.hudWindow?.orderFront(nil)
         }
     }
@@ -334,9 +350,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // No-op when idle (nothing to restore). The reactor is the idle/standby state;
             // the user activates Jarvis via hotkey or wake word, not by tapping the reactor.
             guard self.lastVisibleState != .hidden else { return }
-            let state = self.lastVisibleState
-            self.hudViewModel.state = state
-            self.hudWindow?.resizeForExpanded(toHeight: state.preferredHeight)
+            self.hudViewModel.state = self.lastVisibleState
+            self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
             self.hudWindow?.orderFront(nil)
         }
     }
