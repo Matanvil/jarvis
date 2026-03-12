@@ -9,10 +9,16 @@ final class MenuBarController {
     private var awayModeItem: NSMenuItem?
     private let onRestart: () -> Void
     private let onSettings: () -> Void
+    private let onNewConversation: () -> Void
 
-    init(onRestart: @escaping () -> Void, onSettings: @escaping () -> Void) {
+    init(
+        onRestart: @escaping () -> Void,
+        onSettings: @escaping () -> Void,
+        onNewConversation: @escaping () -> Void
+    ) {
         self.onRestart = onRestart
         self.onSettings = onSettings
+        self.onNewConversation = onNewConversation
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setupButton()
         setupMenu()
@@ -91,6 +97,10 @@ final class MenuBarController {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         URLSession.shared.dataTask(with: request).resume()
+        // Clear the Swift-side conversation thread and save the session
+        DispatchQueue.main.async { [weak self] in
+            self?.onNewConversation()
+        }
     }
 
     func syncAwayState() {
