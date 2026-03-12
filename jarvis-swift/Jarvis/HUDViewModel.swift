@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 enum HUDState: Equatable {
     case hidden
@@ -10,25 +11,66 @@ enum HUDState: Equatable {
     case approved
     case denied
     case minimized
-
-    var preferredHeight: CGFloat {
-        switch self {
-        case .hidden:                   return 60
-        case .minimized:                return 72
-        case .listening, .thinking,
-             .executing, .approved,
-             .denied:                   return 76
-        case .response(let text):
-            // Approx 20px per line at 14pt, 560px usable width (~80 chars/line), 32px padding
-            let lines = max(1, text.count / 80 + text.filter { $0 == "\n" }.count)
-            return min(320, CGFloat(lines) * 22 + 64)
-        case .approval:                 return 160
-        }
-    }
 }
 
 class HUDViewModel: ObservableObject {
     static let shared = HUDViewModel()
+
+    // MARK: - Status bar state (drives sticky bar + window show/hide)
     @Published var state: HUDState = .hidden
+
+    // MARK: - Conversation thread
+    @Published var turns: [ConversationTurn] = []
+
+    /// Reported by HUDView via PreferenceKey — actual rendered height of the thread.
+    /// Capped at 60% of screen height. AppDelegate observes this to resize the window.
+    @Published var contentHeight: CGFloat = 120
+
+    /// Start time of the current session (first command's timestamp). Used for save filename.
+    private(set) var sessionStart: Date = Date()
+
+    var completedTurnCount: Int {
+        turns.filter { $0.response != nil }.count
+    }
+
     private init() {}
+
+    // MARK: - Turn mutation (called by AudioController on main thread)
+
+    /// Begin a new in-progress turn. Called when a command is sent.
+    func startTurn(command: String) {
+        if turns.isEmpty {
+            sessionStart = Date()
+        }
+        turns.append(ConversationTurn(command: command))
+    }
+
+    /// Append a tool step to the most recent in-progress turn.
+    func appendStep(_ step: Step) {
+        guard !turns.isEmpty else { return }
+        turns[turns.count - 1].steps.append(step)
+    }
+
+    /// Finalize the most recent turn with the given response text.
+    func finalizeTurn(response: String) {
+        guard !turns.isEmpty else { return }
+        turns[turns.count - 1].response = response
+    }
+
+    /// Save current session and clear the thread.
+    func newConversation() {
+        let snapshot = turns
+        let start = sessionStart
+        DispatchQueue.global(qos: .utility).async {
+            ConversationStore.save(turns: snapshot, sessionStart: start)
+        }
+        turns = []
+        sessionStart = Date()
+        contentHeight = 120
+    }
+
+    /// Synchronous save — called from applicationWillTerminate.
+    func saveSessionSync() {
+        ConversationStore.save(turns: turns, sessionStart: sessionStart)
+    }
 }
