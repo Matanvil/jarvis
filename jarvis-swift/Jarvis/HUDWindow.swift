@@ -43,17 +43,19 @@ class HUDWindow: NSPanel {
 
     // MARK: - Canonical sizes
 
+    // Issue #4: query live screen width so canonicalWidth stays correct after display changes.
     private var canonicalWidth: CGFloat {
-        min(max(screenFrame.width * 0.5, 480), 900)
+        let screenWidth = NSScreen.main?.visibleFrame.width ?? screenFrame.width
+        return min(max(screenWidth * 0.5, 480), 900)
     }
 
     // MARK: - UserDefaults
 
     private static func loadOrigin(forKey key: String) -> NSPoint? {
-        guard let str = UserDefaults.standard.string(forKey: key) else { return nil }
-        let pt = NSPointFromString(str)
-        // NSPointFromString returns .zero on failure — treat as missing
-        return (pt == .zero) ? nil : pt
+        // Issue #1: check key existence before parsing so {0,0} is a valid saved position.
+        guard UserDefaults.standard.object(forKey: key) != nil,
+              let str = UserDefaults.standard.string(forKey: key) else { return nil }
+        return NSPointFromString(str)
     }
 
     private func savePosition() {
@@ -63,30 +65,35 @@ class HUDWindow: NSPanel {
 
     // MARK: - Minimize / expand sizing
 
-    /// Collapse to 72×72 arc reactor icon. Restores saved minimized position if available.
+    /// Collapse to 100×100 arc reactor icon (extra 14pt on each side for the ambient glow).
+    /// Restores saved minimized position if available.
     func resizeForMinimized() {
         isMinimized = true
         isMovableByWindowBackground = false   // tap gestures need priority; drag is handled in mouseDragged
 
-        let size = NSSize(width: 72, height: 72)
+        // Issue #6: 100×100 gives the 28pt glow circle + 14pt blur room to render.
+        let size = NSSize(width: 100, height: 100)
         let saved = Self.loadOrigin(forKey: Self.positionKeyMinimized)
         let origin = clampedOrigin(saved ?? frame.origin, size: size)
-        setFrame(NSRect(origin: origin, size: size), display: true, animate: true)
+        // Issue #5: animate: false — spec marks collapse/expand animation out of scope.
+        setFrame(NSRect(origin: origin, size: size), display: true, animate: false)
         applyContentMask(circle: true, size: size)
         savePosition()
     }
 
     /// Expand to full-width pill at the given height.
-    /// If coming from minimized, anchors to the icon's current position and picks the best
-    /// expansion direction so the pill stays fully on screen.
+    /// Restores the saved full-HUD position; falls back to current origin if none saved.
     func resizeForExpanded(toHeight height: CGFloat) {
         isMinimized = false
         isMovableByWindowBackground = true
 
         let width = canonicalWidth
         let size = NSSize(width: width, height: height)
-        let origin = smartExpandOrigin(from: frame.origin, targetSize: size)
-        setFrame(NSRect(origin: origin, size: size), display: true, animate: true)
+        // Issue #3: restore saved full-HUD position instead of anchoring to reactor origin.
+        let savedOrigin = Self.loadOrigin(forKey: Self.positionKeyFull)
+        let origin = smartExpandOrigin(from: savedOrigin ?? frame.origin, targetSize: size)
+        // Issue #5: animate: false — spec marks collapse/expand animation out of scope.
+        setFrame(NSRect(origin: origin, size: size), display: true, animate: false)
         applyContentMask(circle: false, size: size)
         savePosition()
     }
@@ -165,6 +172,7 @@ class HUDWindow: NSPanel {
         if isMinimized {
             savePosition()
         }
+        super.mouseUp(with: event)   // Issue #8: maintain responder chain
     }
 }
 

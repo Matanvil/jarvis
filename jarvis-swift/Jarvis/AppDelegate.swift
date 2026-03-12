@@ -305,8 +305,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func expandHUD() {
         DispatchQueue.main.async {
-            guard self.lastVisibleState != .hidden else { return }
-            let state = self.lastVisibleState
+            // Issue #2: on fresh launch lastVisibleState is .hidden — fall back to .listening
+            // so tapping the reactor always produces a visible expanded HUD.
+            let state: HUDState = self.lastVisibleState == .hidden ? .listening : self.lastVisibleState
             self.hudViewModel.state = state
             self.hudWindow?.resizeForExpanded(toHeight: state.preferredHeight)
             self.hudWindow?.orderFront(nil)

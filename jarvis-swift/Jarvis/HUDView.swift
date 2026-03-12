@@ -51,7 +51,6 @@ struct HUDView: View {
                 .padding(8)
             }
         }
-        .background(Color.clear)
         .animation(.easeInOut(duration: 0.2), value: viewModel.state == .hidden)
     }
 
