@@ -390,9 +390,17 @@ def _deep_merge(base: dict, updates: dict) -> dict:
 
 @app.post("/config")
 def update_config(updates: dict):
+    global _guardrails
     current = cfg_module.load()
     merged = _deep_merge(current, updates)
     cfg_module.save(merged)
+    # Hot-reload guardrail settings so they take effect without a server restart.
+    if _guardrails and "guardrails" in merged:
+        for category, setting in merged["guardrails"].items():
+            try:
+                _guardrails.update_config(category, setting)
+            except ValueError:
+                pass
     return {"saved": True}
 
 
