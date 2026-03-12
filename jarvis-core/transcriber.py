@@ -3,7 +3,6 @@
 Load the model once at startup with load(), then call transcribe() per audio file.
 """
 
-import os
 import re
 import subprocess
 
@@ -23,7 +22,7 @@ def load() -> None:
     _model = whisper.load_model("base")
 
 
-def _load_audio(audio_path: str) -> "np.ndarray":
+def _load_audio(audio_path: str) -> "Union[np.ndarray, str]":
     """Decode audio file to a 16kHz mono float32 numpy array.
 
     Uses imageio-ffmpeg's bundled binary (full path) so no system ffmpeg is needed.

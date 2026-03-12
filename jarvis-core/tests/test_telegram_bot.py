@@ -392,10 +392,7 @@ async def test_voice_download_failure_propagates():
         ctx = MagicMock()
         ctx.bot.get_file = AsyncMock(side_effect=Exception("network error"))
         update = _make_voice_update(user_id=111)
-        # Exception propagates out of _handle_voice — the global error handler catches it.
-        # Verify the handler does not swallow or suppress the exception.
-        try:
+        # get_file() is called before the try/except block in _handle_voice,
+        # so the exception propagates to the global error handler.
+        with pytest.raises(Exception, match="network error"):
             await telegram_bot._handle_voice(update, ctx)
-            # If it didn't raise, that's also acceptable behavior (if the handler catches it internally)
-        except Exception as e:
-            assert "network error" in str(e)
