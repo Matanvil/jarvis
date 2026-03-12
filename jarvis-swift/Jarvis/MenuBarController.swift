@@ -8,9 +8,11 @@ final class MenuBarController {
     private let statusItem: NSStatusItem
     private var awayModeItem: NSMenuItem?
     private let onRestart: () -> Void
+    private let onSettings: () -> Void
 
-    init(onRestart: @escaping () -> Void) {
+    init(onRestart: @escaping () -> Void, onSettings: @escaping () -> Void) {
         self.onRestart = onRestart
+        self.onSettings = onSettings
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setupButton()
         setupMenu()
@@ -23,6 +25,10 @@ final class MenuBarController {
 
     private func setupMenu() {
         let menu = NSMenu()
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
+        menu.addItem(NSMenuItem.separator())
         let newConvo = NSMenuItem(
             title: "New Conversation",
             action: #selector(resetConversation),
@@ -51,6 +57,10 @@ final class MenuBarController {
         )
         menu.addItem(quit)
         statusItem.menu = menu
+    }
+
+    @objc private func openSettings() {
+        onSettings()
     }
 
     @objc private func restartServer() {

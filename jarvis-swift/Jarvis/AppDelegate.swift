@@ -34,9 +34,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        menuBarController = MenuBarController(onRestart: { [weak self] in
-            self?.startPythonCore()
-        })
+        menuBarController = MenuBarController(
+            onRestart: { [weak self] in
+                self?.startPythonCore()
+            },
+            onSettings: {
+                SettingsWindowController.shared.open()
+            }
+        )
         jarvisClient = JarvisClient()
         audioController = AudioController(
             client: jarvisClient,
