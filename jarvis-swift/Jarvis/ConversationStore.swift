@@ -24,7 +24,9 @@ struct ConversationStore {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd'T'HH-mm-ss-SSS"
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        let filename = formatter.string(from: sessionStart) + ".json"
+        // Append a short UUID suffix to prevent collisions if two sessions save within the same ms
+        let uniqueSuffix = UUID().uuidString.prefix(8)
+        let filename = "\(formatter.string(from: sessionStart))-\(uniqueSuffix).json"
         let fileURL = dir.appendingPathComponent(filename)
 
         let encoder = JSONEncoder()
@@ -46,14 +48,14 @@ struct ConversationStore {
         let dir = conversationsDir
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: dir,
-            includingPropertiesForKeys: [.contentModificationDateKey],
+            includingPropertiesForKeys: [.creationDateKey],
             options: .skipsHiddenFiles
         ) else { return }
 
         let sorted = files
             .compactMap { url -> (URL, Date)? in
                 guard url.pathExtension == "json",
-                      let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+                      let date = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate
                 else { return nil }
                 return (url, date)
             }
