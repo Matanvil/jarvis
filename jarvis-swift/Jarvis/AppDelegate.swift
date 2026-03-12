@@ -305,9 +305,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func expandHUD() {
         DispatchQueue.main.async {
-            // Issue #2: on fresh launch lastVisibleState is .hidden — fall back to .listening
-            // so tapping the reactor always produces a visible expanded HUD.
-            let state: HUDState = self.lastVisibleState == .hidden ? .listening : self.lastVisibleState
+            // No-op when idle (nothing to restore). The reactor is the idle/standby state;
+            // the user activates Jarvis via hotkey or wake word, not by tapping the reactor.
+            guard self.lastVisibleState != .hidden else { return }
+            let state = self.lastVisibleState
             self.hudViewModel.state = state
             self.hudWindow?.resizeForExpanded(toHeight: state.preferredHeight)
             self.hudWindow?.orderFront(nil)

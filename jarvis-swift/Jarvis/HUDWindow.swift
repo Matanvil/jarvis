@@ -71,8 +71,7 @@ class HUDWindow: NSPanel {
         isMinimized = true
         isMovableByWindowBackground = false   // tap gestures need priority; drag is handled in mouseDragged
 
-        // Issue #6: 100×100 gives the 28pt glow circle + 14pt blur room to render.
-        let size = NSSize(width: 100, height: 100)
+        let size = NSSize(width: 72, height: 72)
         let saved = Self.loadOrigin(forKey: Self.positionKeyMinimized)
         let origin = clampedOrigin(saved ?? frame.origin, size: size)
         // Issue #5: animate: false — spec marks collapse/expand animation out of scope.
