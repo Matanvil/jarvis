@@ -187,6 +187,10 @@ class Router:
         assistant_text = result.get("display") or result.get("speak") or ""
         if not assistant_text:
             return
+        steps = result.get("steps") or []
+        if steps:
+            tools_used = ", ".join(s["tool"] for s in steps)
+            assistant_text = f"{assistant_text}\n\n[Tools used: {tools_used}]"
         self._history.extend([
             {"role": "user", "content": user_text},
             {"role": "assistant", "content": assistant_text},

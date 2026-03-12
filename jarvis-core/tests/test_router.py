@@ -289,3 +289,37 @@ def test_intent_class_destructive_annotated_in_metadata(config):
         result = r.process("delete temp files", cwd=None)
 
     assert result.get("_intent_class") == "destructive"
+
+
+# ── history tool summary ──────────────────────────────────────────────────────
+
+def test_history_includes_tools_used_when_steps_present(haiku_router, mock_haiku_agent):
+    """Assistant history entry appends [Tools used: ...] when steps are present."""
+    mock_haiku_agent.run.return_value = {
+        "speak": "Done.", "display": "Done.",
+        "steps": [
+            {"tool": "web_fetch", "input_summary": "...", "milestone": False},
+            {"tool": "run_code", "input_summary": "...", "milestone": False},
+        ],
+    }
+    with patch.object(haiku_router, "_classify", return_value={
+        "can_handle_locally": False, "intent_class": "read_only", "reason": "test"
+    }):
+        haiku_router.process("fetch github issues")
+
+    assistant_msg = haiku_router._history[-1]["content"]
+    assert "[Tools used: web_fetch, run_code]" in assistant_msg
+
+
+def test_history_no_tools_suffix_when_no_steps(haiku_router, mock_haiku_agent):
+    """Assistant history entry has no [Tools used] suffix when steps list is empty."""
+    mock_haiku_agent.run.return_value = {
+        "speak": "Done.", "display": "Done.", "steps": [],
+    }
+    with patch.object(haiku_router, "_classify", return_value={
+        "can_handle_locally": False, "intent_class": "read_only", "reason": "test"
+    }):
+        haiku_router.process("hello")
+
+    assistant_msg = haiku_router._history[-1]["content"]
+    assert "[Tools used:" not in assistant_msg
