@@ -17,7 +17,7 @@ enum HUDState: Equatable {
         case .minimized:                return 72
         case .listening, .thinking,
              .executing, .approved,
-             .denied:                   return 60
+             .denied:                   return 76
         case .response(let text):
             // Approx 20px per line at 14pt, 560px usable width (~80 chars/line), 32px padding
             let lines = max(1, text.count / 80 + text.filter { $0 == "\n" }.count)
