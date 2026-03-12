@@ -34,9 +34,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        menuBarController = MenuBarController(onRestart: { [weak self] in
-            self?.startPythonCore()
-        })
+        menuBarController = MenuBarController(
+            onRestart: { [weak self] in
+                self?.startPythonCore()
+            },
+            onSettings: {
+                SettingsWindowController.shared.open()
+            }
+        )
         jarvisClient = JarvisClient()
         audioController = AudioController(
             client: jarvisClient,
@@ -86,10 +91,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return fallback
     }
 
-    private func killOrphanedServer() {
+    private func killOrphanedServer(port: Int = 8765) {
         let cleanup = Process()
         cleanup.executableURL = URL(fileURLWithPath: "/bin/sh")
-        cleanup.arguments = ["-c", "lsof -ti :8765 | xargs kill -9 2>/dev/null || true"]
+        cleanup.arguments = ["-c", "lsof -ti :\(port) | xargs kill -9 2>/dev/null || true"]
         try? cleanup.run()
         cleanup.waitUntilExit()
     }
@@ -120,8 +125,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 // Wait for the tracked process to fully exit before sweeping the port.
                 dyingProcess?.waitUntilExit()
-                // Kill any orphaned process still holding port 8765.
-                self.killOrphanedServer()
+
+                // Read server_port from config file (server is not yet running)
+                let port: Int = {
+                    let configPath = NSHomeDirectory() + "/.jarvis/config.json"
+                    guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let p = json["server_port"] as? Int, p > 1024, p <= 65535 else { return 8765 }
+                    return p
+                }()
+
+                // Kill any orphaned process still holding the port.
+                self.killOrphanedServer(port: port)
 
                 let coreDir = self.resolveCoreDirectory()
                 let venvPython = coreDir.appendingPathComponent(".venv/bin/python")
@@ -136,7 +151,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 process.arguments = [
                     "-m", "uvicorn", "server:app",
                     "--host", "127.0.0.1",
-                    "--port", "8765",
+                    "--port", "\(port)",
                     "--log-level", "warning",
                 ]
                 process.currentDirectoryURL = coreDir
@@ -158,6 +173,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func restartPythonCore() {
+        startPythonCore()
+    }
+
     // MARK: - Health Poll
 
     private func scheduleHealthPoll() {
@@ -170,7 +189,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkHealth() {
-        guard let url = URL(string: "http://127.0.0.1:8765/health") else { return }
+        let port: Int = {
+            let configPath = NSHomeDirectory() + "/.jarvis/config.json"
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: configPath)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let p = json["server_port"] as? Int, p > 1024, p <= 65535 else { return 8765 }
+            return p
+        }()
+        guard let url = URL(string: "http://127.0.0.1:\(port)/health") else { return }
 
         let request = URLRequest(url: url, timeoutInterval: 5)
         let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in

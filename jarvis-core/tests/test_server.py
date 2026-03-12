@@ -292,6 +292,28 @@ def test_config_post_deep_merges_guardrails(client_and_agent, tmp_path):
         assert saved["guardrails"]["delete_files"] == "auto_allow"
 
 
+def test_config_post_hot_reloads_guardrails(client_and_agent):
+    """POST /config must update the in-memory guardrails so changes take effect immediately."""
+    import server as srv
+    import config as cfg_module
+    from guardrails import Guardrails, Action, Decision
+
+    original = {
+        "guardrails": {"read_files": "auto_allow", "delete_files": "require_approval"},
+    }
+    live_guardrails = Guardrails(original)
+    old_guardrails = srv._guardrails
+    srv._guardrails = live_guardrails
+    try:
+        with patch.object(cfg_module, "load", return_value=dict(original)), \
+             patch.object(cfg_module, "save"):
+            client_and_agent[0].post("/config", json={"guardrails": {"read_files": "require_approval"}})
+        # In-memory guardrails must reflect the new setting immediately
+        assert live_guardrails.classify(Action("read_files", "read test.txt")) == Decision.REQUIRE_APPROVAL
+    finally:
+        srv._guardrails = old_guardrails
+
+
 def test_approve_classify_yes(client_and_agent):
     """'yes' should classify as approved=True."""
     with patch("server._classify_approval", return_value=True):
