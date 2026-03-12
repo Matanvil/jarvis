@@ -47,24 +47,29 @@ async def _handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         pass  # If even the fallback fails, at least it's logged above.
 
 
-async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _validate(update):
-        return
+async def _run_command(update: Update, text: str) -> None:
+    """POST text to /command and handle the response.
+
+    Used by both _handle_message (text) and _handle_voice (voice transcription).
+    state.pending_command is always set to the `text` parameter — never to
+    update.message.text — so /approve re-submits the right command in both cases.
+    """
     state = get_state()
-    state.chat_id = update.effective_chat.id
-    await update.message.reply_text("⏳ On it...")
     for attempt in range(2):
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{_SERVER_URL}/command",
-                    json={"text": update.message.text, "source": "telegram"},
+                    json={"text": text, "source": "telegram"},
                     timeout=120.0,
                 )
                 try:
                     data = resp.json()
                 except ValueError:
-                    err_log.error("Non-JSON response from server: status=%d body=%r", resp.status_code, resp.text[:200])
+                    err_log.error(
+                        "Non-JSON response from server: status=%d body=%r",
+                        resp.status_code, resp.text[:200],
+                    )
                     await update.message.reply_text("Server returned an unexpected response — try again.")
                     return
             break
@@ -84,7 +89,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     ar = data.get("approval_required")
     if ar:
-        state.pending_command = update.message.text
+        state.pending_command = text  # NOTE: `text` param, not update.message.text
         state.pending_tool_use_id = ar.get("tool_use_id")
         state.pending_category = ar.get("category", "")
         action = ar.get("description", "this action")
@@ -94,6 +99,15 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         reply = data.get("display") or data.get("speak") or data.get("error") or "Done."
         await update.message.reply_text(reply)
+
+
+async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _validate(update):
+        return
+    state = get_state()
+    state.chat_id = update.effective_chat.id
+    await update.message.reply_text("⏳ On it...")
+    await _run_command(update, update.message.text)
 
 
 async def _handle_away(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
