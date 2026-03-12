@@ -40,7 +40,7 @@ def transcribe(audio_path: str) -> str:
     """
     if _model is None:
         raise RuntimeError("Voice transcription not available")
-    result = _model.transcribe(audio_path, language="en")
+    result = _model.transcribe(audio_path, language="en", fp16=False)
     text = result["text"].strip()
     # Remove Whisper special tokens (e.g. <|nn|>, <|en|>) that occasionally leak into output
     text = re.sub(r"<\|[^|]*\|>", "", text).strip()
