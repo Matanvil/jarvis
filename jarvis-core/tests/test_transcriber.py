@@ -27,11 +27,13 @@ def test_transcribe_returns_stripped_text():
     mock_model = MagicMock()
     mock_model.transcribe.return_value = {"text": "  run the tests  "}
     transcriber._model = mock_model
+    fake_audio = object()
 
-    result = transcriber.transcribe("/tmp/audio.ogg")
+    with patch("transcriber._load_audio", return_value=fake_audio):
+        result = transcriber.transcribe("/tmp/audio.ogg")
 
     assert result == "run the tests"
-    mock_model.transcribe.assert_called_once_with("/tmp/audio.ogg", language="en", fp16=False)
+    mock_model.transcribe.assert_called_once_with(fake_audio, language="en", fp16=False)
 
 
 def test_transcribe_returns_empty_string_for_whitespace():
@@ -40,7 +42,8 @@ def test_transcribe_returns_empty_string_for_whitespace():
     mock_model.transcribe.return_value = {"text": "   "}
     transcriber._model = mock_model
 
-    result = transcriber.transcribe("/tmp/audio.ogg")
+    with patch("transcriber._load_audio", return_value=object()):
+        result = transcriber.transcribe("/tmp/audio.ogg")
 
     assert result == ""
 
