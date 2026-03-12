@@ -2,6 +2,20 @@ import AppKit
 import Foundation
 import SwiftUI
 
+/// NSHostingView subclass whose backing layer is non-opaque from creation.
+/// This prevents the rendering pipeline from filling the layer content bitmap
+/// with the system background color before SwiftUI paints.
+private final class TransparentHostingView<Content: View>: NSHostingView<Content> {
+    override var isOpaque: Bool { false }
+
+    override func makeBackingLayer() -> CALayer {
+        let layer = super.makeBackingLayer()
+        layer.isOpaque = false
+        layer.backgroundColor = nil   // no background at all — not even a transparent fill
+        return layer
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var pythonProcess: Process?
@@ -10,7 +24,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastRestartTime: Date = .distantPast
     private var healthTimer: Timer?
     private var hudWindow: HUDWindow?
-    private var hudView: NSHostingView<HUDView>?
+    private var hudView: TransparentHostingView<HUDView>?
     private let hudViewModel = HUDViewModel.shared
     private var lastVisibleState: HUDState = .hidden
     private var menuBarController: MenuBarController?
@@ -309,16 +323,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             onDeny:     { [weak self] in self?.handleDeny() }
         )
         let window = HUDWindow(viewModel: hudViewModel)
-        let hostingView = NSHostingView(rootView: view)
+        let hostingView = TransparentHostingView(rootView: view)
         // Prevent NSHostingView from auto-resizing the window to match SwiftUI's intrinsic size.
         // Width/height are controlled entirely by HUDWindow.resizeForExpanded/resizeForMinimized.
         if #available(macOS 13.0, *) {
             hostingView.sizingOptions = []
         }
-        // Use contentView directly (not contentViewController) so the NSPanel's own
-        // transparent/borderless config is not overridden by a view controller.
-        hostingView.wantsLayer = true
-        hostingView.layer?.backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 0)
         window.contentView = hostingView
         hudView = hostingView
         hudWindow = window

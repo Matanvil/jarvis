@@ -72,6 +72,7 @@ class HUDWindow: NSPanel {
         let saved = Self.loadOrigin(forKey: Self.positionKeyMinimized)
         let origin = clampedOrigin(saved ?? frame.origin, size: size)
         setFrame(NSRect(origin: origin, size: size), display: true, animate: true)
+        applyContentMask(circle: true, size: size)
         savePosition()
     }
 
@@ -86,7 +87,27 @@ class HUDWindow: NSPanel {
         let size = NSSize(width: width, height: height)
         let origin = smartExpandOrigin(from: frame.origin, targetSize: size)
         setFrame(NSRect(origin: origin, size: size), display: true, animate: true)
+        applyContentMask(circle: false, size: size)
         savePosition()
+    }
+
+    /// Mask the content view's layer to match the visible shape —
+    /// circle for the minimized arc reactor, pill-shaped rounded rect for the expanded HUD.
+    private func applyContentMask(circle: Bool, size: NSSize) {
+        guard let layer = contentView?.layer else { return }
+        let mask = CAShapeLayer()
+        if circle {
+            mask.path = CGPath(ellipseIn: CGRect(origin: .zero, size: size), transform: nil)
+        } else {
+            // The SwiftUI pill has .padding(8) and cornerRadius 20.
+            // Inset the mask to match the pill exactly.
+            let inset: CGFloat = 8
+            let pillRect = CGRect(x: inset, y: inset,
+                                  width: size.width - inset * 2,
+                                  height: size.height - inset * 2)
+            mask.path = CGPath(roundedRect: pillRect, cornerWidth: 20, cornerHeight: 20, transform: nil)
+        }
+        layer.mask = mask
     }
 
     // MARK: - Smart screen-aware expansion

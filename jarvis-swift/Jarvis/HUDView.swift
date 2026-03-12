@@ -23,7 +23,6 @@ struct HUDView: View {
                         .background(
                             RoundedRectangle(cornerRadius: 20)
                                 .fill(.ultraThinMaterial)
-                                .shadow(color: .black.opacity(0.3), radius: 20, y: 8)
                         )
 
                     // Hover-reveal button row: minimize (−) then close (✕)
@@ -52,6 +51,7 @@ struct HUDView: View {
                 .padding(8)
             }
         }
+        .background(Color.clear)
         .animation(.easeInOut(duration: 0.2), value: viewModel.state == .hidden)
     }
 
