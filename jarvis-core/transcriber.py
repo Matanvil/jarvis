@@ -1,3 +1,8 @@
+"""Whisper-based audio transcription for Jarvis.
+
+Load the model once at startup with load(), then call transcribe() per audio file.
+"""
+
 _model = None  # module-level cache; loaded once at startup
 
 
@@ -5,8 +10,11 @@ def load() -> None:
     """Load Whisper base model into memory. Called once at startup.
 
     Raises ImportError if openai-whisper is not installed.
+    No-op if the model is already loaded.
     """
     global _model
+    if _model is not None:
+        return
     import whisper
     _model = whisper.load_model("base")
 

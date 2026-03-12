@@ -60,3 +60,16 @@ def test_load_raises_import_error_when_whisper_not_installed():
     with patch.dict(sys.modules, {"whisper": None}):
         with pytest.raises(ImportError):
             transcriber.load()
+
+
+def test_load_is_idempotent():
+    import transcriber
+    mock_whisper = MagicMock()
+    mock_model = MagicMock()
+    mock_whisper.load_model.return_value = mock_model
+
+    with patch.dict(sys.modules, {"whisper": mock_whisper}):
+        transcriber.load()
+        transcriber.load()  # second call should be a no-op
+
+    mock_whisper.load_model.assert_called_once_with("base")  # only called once
