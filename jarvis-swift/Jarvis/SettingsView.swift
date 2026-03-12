@@ -88,11 +88,10 @@ struct SettingsView: View {
 
                 // Footer
                 VStack(spacing: 6) {
-                    if let error = vm.saveError {
-                        Text(error)
-                            .font(.system(size: 11))
-                            .foregroundColor(.red)
-                    }
+                    Text(vm.saveError ?? "")
+                        .font(.system(size: 11))
+                        .foregroundColor(.red)
+                        .frame(height: 14)
                     HStack {
                         Spacer()
                         Button("Cancel") { onDismiss() }
