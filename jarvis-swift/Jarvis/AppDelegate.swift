@@ -71,7 +71,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         minimizeHUD()
         audioController.start()
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         startAlertListener()
         installToApplicationsIfNeeded()
         checkFullDiskAccess()
@@ -122,12 +121,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showLocalNotification(title: String, body: String) async {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
-        let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        try? await UNUserNotificationCenter.current().add(req)
+        // Try UNUserNotificationCenter if authorized (works for signed/installed builds).
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        if settings.authorizationStatus == .authorized {
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = .default
+            let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+            try? await center.add(req)
+            return
+        }
+        // Fallback: NSUserNotificationCenter — no permission needed, shows as "Jarvis".
+        // Deprecated but functional on macOS 15 for unsigned dev builds.
+        await MainActor.run {
+            let n = NSUserNotification()
+            n.title = title
+            n.informativeText = body
+            n.soundName = NSUserNotificationDefaultSoundName
+            NSUserNotificationCenter.default.deliver(n)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
