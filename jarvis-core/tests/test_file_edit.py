@@ -87,3 +87,20 @@ def test_execute_tool_file_edit_not_found(tmp_file, guardrails):
         shell, None, None, None, guardrails,
     )
     assert "error" in result.lower() or "not found" in result.lower()
+
+
+def test_write_file_expands_tilde(shell, tmp_path, monkeypatch):
+    """write_file must expand ~ so paths like ~/Desktop/foo write to the real home directory."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = shell.write_file("~/test_jarvis_tilde.txt", "hello")
+    assert result["success"] is True
+    assert (tmp_path / "test_jarvis_tilde.txt").read_text() == "hello"
+
+
+def test_read_file_expands_tilde(shell, tmp_path, monkeypatch):
+    """read_file must expand ~ so ~/path reads from the real home directory."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "test_jarvis_read.txt").write_text("world")
+    result = shell.read_file("~/test_jarvis_read.txt")
+    assert result["content"] == "world"
+    assert result["error"] is None

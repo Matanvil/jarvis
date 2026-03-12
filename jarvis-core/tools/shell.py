@@ -27,7 +27,7 @@ class ShellTool:
 
     def write_file(self, path: str, content: str) -> dict:
         try:
-            p = Path(path)
+            p = Path(path).expanduser()
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
             return {"success": True, "error": None}
@@ -36,7 +36,7 @@ class ShellTool:
 
     def read_file(self, path: str) -> dict:
         try:
-            content = Path(path).read_text()
+            content = Path(path).expanduser().read_text()
             return {"content": content, "error": None}
         except Exception as e:
             return {"content": None, "error": str(e)}
