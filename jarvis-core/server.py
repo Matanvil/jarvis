@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
+import alert_bus
 import config as cfg_module
 import logger as logger_module
 from command_pipeline import CommandPipeline
@@ -71,6 +72,7 @@ def _ensure_ollama_running() -> None:
 async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
     _ensure_ollama_running()
+    alert_bus.set_loop(asyncio.get_running_loop())
     _pipeline, _loggers, _guardrails, store = load_dependencies()
     scheduler = Scheduler(store=store, pipeline=_pipeline)
     sched_module.set_scheduler(scheduler)
@@ -259,6 +261,28 @@ async def events(command_id: str):
             yield f"data: {json.dumps({'type': 'error', 'message': 'timeout'})}\n\n"
         finally:
             _dispatchers.pop(command_id, None)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.get("/alerts")
+async def alert_stream():
+    """SSE stream of push notifications for Swift clients."""
+    q: asyncio.Queue = asyncio.Queue(maxsize=50)
+    alert_bus.subscribe(q)
+
+    async def stream():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    # Keepalive ping so the connection doesn't idle-timeout
+                    yield f"data: {json.dumps({'type': 'ping'})}\n\n"
+                    continue
+                yield f"data: {json.dumps(event)}\n\n"
+        finally:
+            alert_bus.unsubscribe(q)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 

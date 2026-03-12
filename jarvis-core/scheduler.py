@@ -10,6 +10,15 @@ from schedule_store import Schedule, ScheduleStore
 log = logging.getLogger("jarvis.scheduler")
 
 
+def _notify_mac(label: str, body: str) -> None:
+    """Push a native notification to the Swift app via the alert bus."""
+    try:
+        import alert_bus
+        alert_bus.push(title=f"Jarvis: {label}", body=body[:200])
+    except Exception as e:
+        log.warning("alert_bus push failed for '%s': %s", label, e)
+
+
 def send_telegram_result(label: str, response: str, error: str | None, loop=None) -> None:
     """Send scheduled task result to Telegram."""
     from telegram_bot import get_bot
@@ -138,6 +147,10 @@ class Scheduler:
             cmd_log.info(
                 f"cmd={s.command!r} source='scheduled' label={s.label!r} duration_ms={duration_ms} result={result}"
             )
+            # Always fire a macOS notification so the user sees the result when on the Mac,
+            # regardless of whether Telegram is connected.
+            if not result.get("approval_required"):
+                _notify_mac(s.label, result.get("speak") or result.get("display") or "Done.")
             send_telegram_result(s.label, result.get("display") or result.get("speak", ""), result.get("error"), loop=self._loop)
         except Exception as e:
             duration_ms = int((time.time() - start) * 1000)

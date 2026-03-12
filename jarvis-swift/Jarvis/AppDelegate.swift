@@ -1,6 +1,8 @@
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
+import UserNotifications
 
 /// NSHostingView subclass whose backing layer is non-opaque from creation.
 /// This prevents the rendering pipeline from filling the layer content bitmap
@@ -30,6 +32,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuBarController: MenuBarController?
     private var jarvisClient: JarvisClient!
     private var audioController: AudioController!
+    private var cancellables = Set<AnyCancellable>()
+    private var alertListenerTask: Task<Void, Never>?
 
     // MARK: - Lifecycle
 
@@ -40,6 +44,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onSettings: {
                 SettingsWindowController.shared.open()
+            },
+            onNewConversation: { [weak self] in
+                self?.hudViewModel.newConversation()
             }
         )
         jarvisClient = JarvisClient()
@@ -52,15 +59,96 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         startPythonCore()
         scheduleHealthPoll()
         setupHUD()
+
+        // Observe contentHeight to resize the HUD window as the thread grows
+        hudViewModel.$contentHeight
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] height in
+                guard let self, self.hudViewModel.state != .minimized, self.hudViewModel.state != .hidden else { return }
+                self.hudWindow?.resizeForExpanded(toHeight: height)
+            }
+            .store(in: &cancellables)
+
         minimizeHUD()
         audioController.start()
+        startAlertListener()
         installToApplicationsIfNeeded()
         checkFullDiskAccess()
     }
 
+    // MARK: - Alert Listener
+
+    private func startAlertListener() {
+        alertListenerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.connectAlertStream()
+                // Wait before reconnecting (Python may still be starting)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
+
+    private func connectAlertStream() async {
+        guard let url = URL(string: "http://127.0.0.1:8765/alerts") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 300
+        do {
+            let (stream, _) = try await URLSession.shared.bytes(for: request)
+            var buffer = ""
+            for try await byte in stream {
+                guard !Task.isCancelled else { return }
+                buffer.append(Character(UnicodeScalar(byte)))
+                if buffer.hasSuffix("\n\n") {
+                    for line in buffer.components(separatedBy: "\n") where line.hasPrefix("data: ") {
+                        let jsonStr = String(line.dropFirst(6))
+                        guard let data = jsonStr.data(using: .utf8),
+                              let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                              event["type"] as? String == "alert",
+                              let title = event["title"] as? String,
+                              let body = event["body"] as? String else { continue }
+                        await showLocalNotification(title: title, body: body)
+                    }
+                    buffer = ""
+                }
+            }
+        } catch {
+            // Connection refused while Python is starting is expected — don't log
+            let msg = error.localizedDescription
+            if !msg.contains("Connection refused") && !msg.contains("cancelled") {
+                NSLog("[Jarvis] Alert stream error: %@", msg)
+            }
+        }
+    }
+
+    private func showLocalNotification(title: String, body: String) async {
+        // Try UNUserNotificationCenter if authorized (works for signed/installed builds).
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        if settings.authorizationStatus == .authorized {
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = .default
+            let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+            try? await center.add(req)
+            return
+        }
+        // Fallback: NSUserNotificationCenter — no permission needed, shows as "Jarvis".
+        // Deprecated but functional on macOS 15 for unsigned dev builds.
+        await MainActor.run {
+            let n = NSUserNotification()
+            n.title = title
+            n.informativeText = body
+            n.soundName = NSUserNotificationDefaultSoundName
+            NSUserNotificationCenter.default.deliver(n)
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         isTerminating = true
+        alertListenerTask?.cancel()
         healthTimer?.invalidate()
+        hudViewModel.saveSessionSync()
         if let proc = pythonProcess, proc.processIdentifier > 0 {
             proc.terminate()  // SIGTERM — give uvicorn a chance to flush
             let done = DispatchSemaphore(value: 0)
@@ -303,7 +391,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async {
             self.lastVisibleState = state
             self.hudViewModel.state = state
-            self.hudWindow?.resizeForExpanded(toHeight: state.preferredHeight)
+            self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
             self.hudWindow?.orderFront(nil)
         }
     }
@@ -334,9 +422,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // No-op when idle (nothing to restore). The reactor is the idle/standby state;
             // the user activates Jarvis via hotkey or wake word, not by tapping the reactor.
             guard self.lastVisibleState != .hidden else { return }
-            let state = self.lastVisibleState
-            self.hudViewModel.state = state
-            self.hudWindow?.resizeForExpanded(toHeight: state.preferredHeight)
+            self.hudViewModel.state = self.lastVisibleState
+            self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
             self.hudWindow?.orderFront(nil)
         }
     }
