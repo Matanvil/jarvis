@@ -292,3 +292,107 @@ async def test_handle_schedules_lists_tasks(schedules_update):
     text = schedules_update.message.reply_text.call_args[0][0]
     assert "morning summary" in text
     assert "abc123" in text
+
+
+# --- Voice handler tests ---
+
+def _make_voice_update(user_id: int, file_id: str = "file123", chat_id: int = 999):
+    update = MagicMock()
+    update.effective_user.id = user_id
+    update.effective_chat.id = chat_id
+    update.message.voice.file_id = file_id
+    update.message.reply_text = AsyncMock()
+    return update
+
+
+def _make_voice_context(audio_bytes: bytes = b"fake_ogg_data"):
+    ctx = MagicMock()
+    mock_file = AsyncMock()
+    mock_file.download_as_bytearray = AsyncMock(return_value=bytearray(audio_bytes))
+    ctx.bot.get_file = AsyncMock(return_value=mock_file)
+    return ctx
+
+
+async def test_voice_message_shows_transcript_and_executes():
+    import telegram_bot
+    with patch("telegram_bot.cfg_module.load", return_value={"telegram": {"bot_token": "x", "allowed_user_id": 111}}):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"speak": "done", "display": "done"}
+        with patch("telegram_bot.httpx.AsyncClient") as mock_cls, \
+             patch("telegram_bot.transcriber.transcribe", return_value="run the tests"):
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_cls.return_value = mock_client
+            update = _make_voice_update(user_id=111)
+            await telegram_bot._handle_voice(update, _make_voice_context())
+    calls = [c[0][0] for c in update.message.reply_text.call_args_list]
+    assert any("🎙" in c and "run the tests" in c for c in calls)
+    assert any("done" in c for c in calls)
+
+
+async def test_voice_empty_transcription_replies_could_not_hear():
+    import telegram_bot
+    with patch("telegram_bot.cfg_module.load", return_value={"telegram": {"bot_token": "x", "allowed_user_id": 111}}):
+        with patch("telegram_bot.transcriber.transcribe", return_value=""):
+            update = _make_voice_update(user_id=111)
+            await telegram_bot._handle_voice(update, _make_voice_context())
+    last_call = update.message.reply_text.call_args[0][0]
+    assert "Couldn't make that out" in last_call
+
+
+async def test_voice_transcription_exception_replies_failed():
+    import telegram_bot
+    with patch("telegram_bot.cfg_module.load", return_value={"telegram": {"bot_token": "x", "allowed_user_id": 111}}):
+        with patch("telegram_bot.transcriber.transcribe", side_effect=Exception("audio error")):
+            update = _make_voice_update(user_id=111)
+            await telegram_bot._handle_voice(update, _make_voice_context())
+    last_call = update.message.reply_text.call_args[0][0]
+    assert "Failed to transcribe" in last_call
+
+
+async def test_voice_transcription_not_available_replies_not_available():
+    import telegram_bot
+    with patch("telegram_bot.cfg_module.load", return_value={"telegram": {"bot_token": "x", "allowed_user_id": 111}}):
+        with patch("telegram_bot.transcriber.transcribe",
+                   side_effect=RuntimeError("Voice transcription not available")):
+            update = _make_voice_update(user_id=111)
+            await telegram_bot._handle_voice(update, _make_voice_context())
+    last_call = update.message.reply_text.call_args[0][0]
+    assert "Voice transcription not available" in last_call
+
+
+async def test_voice_approval_stores_transcribed_text_as_pending():
+    import telegram_bot
+    with patch("telegram_bot.cfg_module.load", return_value={"telegram": {"bot_token": "x", "allowed_user_id": 111}}):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "approval_required": {
+                "tool_use_id": "tool_xyz",
+                "description": "delete files",
+            }
+        }
+        with patch("telegram_bot.httpx.AsyncClient") as mock_cls, \
+             patch("telegram_bot.transcriber.transcribe", return_value="delete all logs"):
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_cls.return_value = mock_client
+            update = _make_voice_update(user_id=111)
+            await telegram_bot._handle_voice(update, _make_voice_context())
+    state = telegram_state.get_state()
+    assert state.pending_command == "delete all logs"
+
+
+async def test_voice_download_failure_propagates():
+    import telegram_bot
+    with patch("telegram_bot.cfg_module.load", return_value={"telegram": {"bot_token": "x", "allowed_user_id": 111}}):
+        ctx = MagicMock()
+        ctx.bot.get_file = AsyncMock(side_effect=Exception("network error"))
+        update = _make_voice_update(user_id=111)
+        # get_file() is called before the try/except block in _handle_voice,
+        # so the exception propagates to the global error handler.
+        with pytest.raises(Exception, match="network error"):
+            await telegram_bot._handle_voice(update, ctx)

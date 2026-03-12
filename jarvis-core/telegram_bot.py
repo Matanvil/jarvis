@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import tempfile
 import httpx
 from telegram import Update
 from telegram.ext import (
@@ -11,6 +13,7 @@ from telegram.ext import (
 )
 import config as cfg_module
 from telegram_state import get_state
+import transcriber
 
 log = logging.getLogger("jarvis.telegram")
 err_log = logging.getLogger("jarvis.errors")
@@ -47,24 +50,29 @@ async def _handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         pass  # If even the fallback fails, at least it's logged above.
 
 
-async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _validate(update):
-        return
+async def _run_command(update: Update, text: str) -> None:
+    """POST text to /command and handle the response.
+
+    Used by both _handle_message (text) and _handle_voice (voice transcription).
+    state.pending_command is always set to the `text` parameter — never to
+    update.message.text — so /approve re-submits the right command in both cases.
+    """
     state = get_state()
-    state.chat_id = update.effective_chat.id
-    await update.message.reply_text("⏳ On it...")
     for attempt in range(2):
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{_SERVER_URL}/command",
-                    json={"text": update.message.text, "source": "telegram"},
+                    json={"text": text, "source": "telegram"},
                     timeout=120.0,
                 )
                 try:
                     data = resp.json()
                 except ValueError:
-                    err_log.error("Non-JSON response from server: status=%d body=%r", resp.status_code, resp.text[:200])
+                    err_log.error(
+                        "Non-JSON response from server: status=%d body=%r",
+                        resp.status_code, resp.text[:200],
+                    )
                     await update.message.reply_text("Server returned an unexpected response — try again.")
                     return
             break
@@ -84,7 +92,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     ar = data.get("approval_required")
     if ar:
-        state.pending_command = update.message.text
+        state.pending_command = text  # NOTE: `text` param, not update.message.text
         state.pending_tool_use_id = ar.get("tool_use_id")
         state.pending_category = ar.get("category", "")
         action = ar.get("description", "this action")
@@ -94,6 +102,56 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         reply = data.get("display") or data.get("speak") or data.get("error") or "Done."
         await update.message.reply_text(reply)
+
+
+async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _validate(update):
+        return
+    state = get_state()
+    state.chat_id = update.effective_chat.id
+    await update.message.reply_text("⏳ On it...")
+    await _run_command(update, update.message.text)
+
+
+async def _handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _validate(update):
+        return
+    state = get_state()
+    state.chat_id = update.effective_chat.id
+
+    await update.message.reply_text("⏳ Transcribing...")
+
+    voice = update.message.voice
+    tg_file = await context.bot.get_file(voice.file_id)
+    audio_bytes = await tg_file.download_as_bytearray()
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".ogg", delete=False)
+    try:
+        tmp.write(audio_bytes)
+        tmp.close()
+        text = transcriber.transcribe(tmp.name)
+    except RuntimeError as e:
+        # RuntimeError means Whisper is unavailable (model not loaded).
+        # Split from bare Exception so the user sees "not available" vs "failed".
+        # Note: spec pseudocode uses a single bare except; this plan intentionally
+        # differentiates the two error types for a clearer user-facing message.
+        await update.message.reply_text(str(e))
+        return
+    except Exception:
+        err_log.exception("Voice transcription failed")
+        await update.message.reply_text("Failed to transcribe — try again.")
+        return
+    finally:
+        if not tmp.closed:
+            tmp.close()
+        os.unlink(tmp.name)
+
+    if not text:
+        await update.message.reply_text("Couldn't make that out — try again.")
+        return
+
+    await update.message.reply_text(f'🎙 "{text}"\n⏳ On it...')
+    await _run_command(update, text)
 
 
 async def _handle_away(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -275,11 +333,16 @@ def create_app() -> Application | None:
     app.add_handler(CommandHandler("schedule", _handle_schedule))
     app.add_handler(CommandHandler("schedules", _handle_schedules))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
+    app.add_handler(MessageHandler(filters.VOICE, _handle_voice))
     return app
 
 
 async def start_bot() -> None:
     global _app
+    try:
+        transcriber.load()
+    except Exception:
+        log.warning("openai-whisper not available — voice transcription disabled")
     _app = create_app()
     if _app is None:
         log.info("Telegram not configured — skipping")

@@ -7,3 +7,5 @@ requests==2.32.5
 pydantic==2.9.0
 python-telegram-bot==22.6
 APScheduler==3.10.4
+openai-whisper==20250625
+imageio-ffmpeg==0.6.0
