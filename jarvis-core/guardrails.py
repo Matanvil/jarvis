@@ -27,7 +27,12 @@ class Guardrails:
         return Decision.REQUIRE_APPROVAL
 
     def trust_for_session(self, category: str) -> None:
+        """Grant one-time trust for category. Cleared after the next command completes."""
         self._session_trusts.add(category)
+
+    def clear_session_trusts(self) -> None:
+        """Revoke all one-time trusts. Called after each command completes."""
+        self._session_trusts.clear()
 
     def revoke_session_trust(self, category: str) -> None:
         self._session_trusts.discard(category)

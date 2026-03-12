@@ -61,6 +61,15 @@ def test_revoke_session_trust_restores_approval():
     assert g.classify(action) == Decision.REQUIRE_APPROVAL
 
 
+def test_clear_session_trusts_restores_all_approvals():
+    g = make_guardrails()
+    g.trust_for_session("delete_files")
+    g.trust_for_session("schedule_create")
+    g.clear_session_trusts()
+    assert g.classify(Action(category="delete_files", description="rm")) == Decision.REQUIRE_APPROVAL
+    assert g.classify(Action(category="schedule_create", description="remind")) == Decision.REQUIRE_APPROVAL
+
+
 def test_update_config_invalid_setting_raises():
     g = make_guardrails()
     with pytest.raises(ValueError, match="Invalid setting"):

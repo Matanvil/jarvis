@@ -201,6 +201,9 @@ async def command(req: CommandRequest):
                 )
             msg = "I'm experiencing an error. Please try again or restart Jarvis."
             return {"speak": msg, "display": msg, "steps": []}
+        finally:
+            if _guardrails:
+                _guardrails.clear_session_trusts()
         _log_command(req, start, result)
         await _handle_away_cancel(req)
         return {**result, "command_id": command_id}
@@ -230,6 +233,8 @@ async def command(req: CommandRequest):
                 logging.getLogger("jarvis.errors").exception("Unhandled error in /command bg")
                 dispatcher.error("I'm experiencing an error. Please try again or restart Jarvis.")
             finally:
+                if _guardrails:
+                    _guardrails.clear_session_trusts()
                 # TTL cleanup: if SSE client never connects, remove dispatcher after 30s
                 loop.call_later(30, lambda: _dispatchers.pop(command_id, None))
 
