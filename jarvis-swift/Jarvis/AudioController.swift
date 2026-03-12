@@ -207,6 +207,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
 
     private func sendCommand(text: String) {
         lastCommandText = text
+        viewModel.startTurn(command: text)
         showHUD(.thinking)
         Task { [weak self] in
             guard let self else { return }
@@ -246,6 +247,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         pendingApprovalCategory = nil
 
         if !approved {
+            viewModel.finalizeTurn(response: "Denied.")
             showHUD(.denied)
             Task {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
@@ -254,6 +256,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             return
         }
 
+        viewModel.finalizeTurn(response: "Approved — re-running…")
         showHUD(.thinking)
         Task { [weak self] in
             guard let self else { return }
@@ -262,7 +265,9 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             )) ?? false
 
             if shouldReissue, let text = originalCommand {
-                // Re-issue the original command — guardrails now trust the category for this session
+                // Re-issue the original command — guardrails now trust the category for this session.
+                // Create a fresh turn for the re-issued command.
+                await MainActor.run { self.viewModel.startTurn(command: text) }
                 do {
                     let commandId = try await client.startCommand(text: text, cwd: nil)
                     await self.listenToEvents(commandId: commandId)
@@ -328,20 +333,25 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         switch type {
         case "step":
             let label = event["label"] as? String ?? "Working…"
+            let milestone = event["milestone"] as? Bool ?? false
+            viewModel.appendStep(Step(tool: label, inputSummary: nil, milestone: milestone))
             showHUD(.executing(step: label))
-            if stepVoice, let milestone = event["milestone"] as? Bool, milestone {
+            if stepVoice, milestone {
                 speak(label)
             }
         case "complete":
             if let data = try? JSONSerialization.data(withJSONObject: event),
                let response = try? JSONDecoder().decode(CommandResponse.self, from: data) {
+                viewModel.finalizeTurn(response: response.text)
                 handleCommandResponse(response)
             } else {
                 let text = event["display"] as? String ?? event["speak"] as? String ?? "Done."
+                viewModel.finalizeTurn(response: text)
                 showHUD(.response(text: text))
             }
         case "error":
             let msg = event["message"] as? String ?? "Something went wrong."
+            viewModel.finalizeTurn(response: "Error: \(msg)")
             showHUD(.response(text: msg))
             speak(msg)
         default:

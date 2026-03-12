@@ -5,7 +5,7 @@ import SwiftUI
 private struct ThreadHeightKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+        value = max(value, nextValue())
     }
 }
 
@@ -110,6 +110,7 @@ struct HUDView: View {
             .onPreferenceChange(ThreadHeightKey.self) { height in
                 let cap = (NSScreen.main?.visibleFrame.height ?? 900) * 0.6
                 let newHeight = min(height + 36 + 16, cap)   // thread + status bar + padding
+                // PreferenceKey callbacks may arrive off-main; guard before writing @Published.
                 DispatchQueue.main.async {
                     viewModel.contentHeight = max(newHeight, 120)
                 }
