@@ -1,7 +1,6 @@
-import io
 import threading
-import wave
 import pytest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import tts
 
@@ -9,89 +8,90 @@ import tts
 @pytest.fixture(autouse=True)
 def reset_tts():
     """Reset module-level singleton between tests."""
-    tts._model = None
+    tts._piper_bin = None
     tts._piper_available = None
     yield
-    tts._model = None
+    tts._piper_bin = None
     tts._piper_available = None
 
 
-def _make_mock_voice():
-    """Return a mock PiperVoice that writes a minimal valid WAV."""
-    mock_voice = MagicMock()
-
-    def fake_synthesize(text, wav_file):
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(22050)
-        wav_file.writeframes(b"\x00" * 200)
-
-    mock_voice.synthesize.side_effect = fake_synthesize
-    return mock_voice
+def _fake_subprocess_run(fake_wav: bytes):
+    """Return a subprocess.run mock that writes fake_wav to --output_file."""
+    def _run(cmd, **kwargs):
+        idx = cmd.index("--output_file")
+        Path(cmd[idx + 1]).write_bytes(fake_wav)
+        return MagicMock(returncode=0)
+    return _run
 
 
-def _mock_piper_module(voice):
-    mock_piper = MagicMock()
-    mock_piper.PiperVoice.load.return_value = voice
-    return mock_piper
+_FAKE_WAV = b"RIFF" + b"\x00" * 40
 
 
 def test_synthesize_returns_bytes_when_piper_available(tmp_path):
-    mock_voice = _make_mock_voice()
-    mock_piper = _mock_piper_module(mock_voice)
+    bin_path = tmp_path / "piper"
+    bin_path.touch()
     onnx = tmp_path / "jarvis.onnx"
     onnx.write_bytes(b"fake")
-    json_f = tmp_path / "jarvis.onnx.json"
-    json_f.write_text("{}")
 
-    with patch.dict("sys.modules", {"piper": mock_piper}), \
-         patch("tts._ONNX_PATH", onnx), \
-         patch("tts._JSON_PATH", json_f), \
-         patch("tts._sha256", return_value="deadbeef"), \
-         patch("tts.JARVIS_ONNX_SHA256", "deadbeef"), \
-         patch("tts.JARVIS_JSON_SHA256", "deadbeef"):
+    tts._piper_available = True
+    tts._piper_bin = bin_path
+
+    with patch("tts._ONNX_PATH", onnx), \
+         patch("subprocess.run", side_effect=_fake_subprocess_run(_FAKE_WAV)):
         result = tts.synthesize("Hello JARVIS")
 
-    assert isinstance(result, bytes)
-    assert len(result) > 44  # WAV header is 44 bytes
+    assert result == _FAKE_WAV
 
 
-def test_synthesize_returns_none_when_piper_not_installed():
-    # Make 'from piper import PiperVoice' raise ImportError
-    with patch.dict("sys.modules", {"piper": None}):
+def test_synthesize_returns_none_when_piper_unavailable():
+    tts._piper_available = False
+    result = tts.synthesize("Hello")
+    assert result is None
+
+
+def test_synthesize_returns_none_on_subprocess_error(tmp_path):
+    bin_path = tmp_path / "piper"
+    bin_path.touch()
+    onnx = tmp_path / "jarvis.onnx"
+    onnx.write_bytes(b"fake")
+
+    tts._piper_available = True
+    tts._piper_bin = bin_path
+
+    mock_result = MagicMock(returncode=1, stderr=b"synthesis error")
+    with patch("tts._ONNX_PATH", onnx), \
+         patch("subprocess.run", return_value=mock_result):
         result = tts.synthesize("Hello")
 
     assert result is None
 
 
-def test_synthesize_returns_none_on_synthesis_exception(tmp_path):
-    mock_voice = MagicMock()
-    mock_voice.synthesize.side_effect = RuntimeError("synthesis failed")
-    mock_piper = _mock_piper_module(mock_voice)
+def test_synthesize_returns_none_on_subprocess_exception(tmp_path):
+    bin_path = tmp_path / "piper"
+    bin_path.touch()
     onnx = tmp_path / "jarvis.onnx"
     onnx.write_bytes(b"fake")
-    json_f = tmp_path / "jarvis.onnx.json"
-    json_f.write_text("{}")
 
-    with patch.dict("sys.modules", {"piper": mock_piper}), \
-         patch("tts._ONNX_PATH", onnx), \
-         patch("tts._JSON_PATH", json_f), \
-         patch("tts._sha256", return_value="deadbeef"), \
-         patch("tts.JARVIS_ONNX_SHA256", "deadbeef"), \
-         patch("tts.JARVIS_JSON_SHA256", "deadbeef"):
+    tts._piper_available = True
+    tts._piper_bin = bin_path
+
+    with patch("tts._ONNX_PATH", onnx), \
+         patch("subprocess.run", side_effect=RuntimeError("crash")):
         result = tts.synthesize("Hello")
 
     assert result is None
 
 
 def test_synthesize_returns_none_on_checksum_mismatch(tmp_path):
-    mock_piper = MagicMock()
+    bin_path = tmp_path / "piper"
+    bin_path.touch()
+    bin_path.chmod(0o755)
     onnx = tmp_path / "jarvis.onnx"
     onnx.write_bytes(b"corrupted")
     json_f = tmp_path / "jarvis.onnx.json"
     json_f.write_text("{}")
 
-    with patch.dict("sys.modules", {"piper": mock_piper}), \
+    with patch("tts._ensure_piper_binary", return_value=bin_path), \
          patch("tts._ONNX_PATH", onnx), \
          patch("tts._JSON_PATH", json_f), \
          patch("tts._sha256", return_value="badhash"), \
@@ -100,39 +100,32 @@ def test_synthesize_returns_none_on_checksum_mismatch(tmp_path):
         result = tts.synthesize("Hello")
 
     assert result is None
-    # File should be deleted after checksum failure
     assert not onnx.exists()
 
 
 def test_load_model_thread_safe(tmp_path):
-    """Concurrent calls result in exactly one initialization.
-
-    Patches are applied OUTSIDE the threads so all threads share the same
-    patched state. Per-thread patch contexts would race with each other and
-    undermine the single-init assertion.
-    """
+    """Concurrent calls result in exactly one binary + model init."""
     call_count = {"n": 0}
-    mock_voice = _make_mock_voice()
-
-    def slow_load(*args, **kwargs):
-        call_count["n"] += 1
-        import time
-        time.sleep(0.05)
-        return mock_voice
-
-    mock_piper = MagicMock()
-    mock_piper.PiperVoice.load.side_effect = slow_load
+    bin_path = tmp_path / "piper"
+    bin_path.touch()
+    bin_path.chmod(0o755)
     onnx = tmp_path / "jarvis.onnx"
     onnx.write_bytes(b"fake")
     json_f = tmp_path / "jarvis.onnx.json"
     json_f.write_text("{}")
+
+    def slow_ensure_binary():
+        call_count["n"] += 1
+        import time
+        time.sleep(0.05)
+        return bin_path
 
     results = []
 
     def worker():
         results.append(tts._load_model())
 
-    with patch.dict("sys.modules", {"piper": mock_piper}), \
+    with patch("tts._ensure_piper_binary", side_effect=slow_ensure_binary), \
          patch("tts._ONNX_PATH", onnx), \
          patch("tts._JSON_PATH", json_f), \
          patch("tts._sha256", return_value="deadbeef"), \
@@ -148,20 +141,21 @@ def test_load_model_thread_safe(tmp_path):
     assert all(r is True for r in results)
 
 
-def test_piper_available_false_on_import_error():
-    """_piper_available is False after ImportError."""
-    with patch.dict("sys.modules", {"piper": None}):
+def test_piper_available_false_on_binary_unavailable():
+    """_piper_available is False when no binary for this platform."""
+    with patch("tts._ensure_piper_binary", return_value=None):
         tts._load_model()
     assert tts.is_available() is False
 
 
 def test_piper_available_false_on_download_failure(tmp_path):
     """_piper_available is False when model download fails."""
-    mock_piper = MagicMock()
+    bin_path = tmp_path / "piper"
+    bin_path.touch()
+    bin_path.chmod(0o755)
     missing = tmp_path / "jarvis.onnx"
-    # file does not exist, download will be attempted
 
-    with patch.dict("sys.modules", {"piper": mock_piper}), \
+    with patch("tts._ensure_piper_binary", return_value=bin_path), \
          patch("tts._ONNX_PATH", missing), \
          patch("tts._JSON_PATH", tmp_path / "jarvis.onnx.json"), \
          patch("tts._download", side_effect=OSError("download failed")):
@@ -171,13 +165,15 @@ def test_piper_available_false_on_download_failure(tmp_path):
 
 def test_piper_available_false_on_checksum_mismatch(tmp_path):
     """_piper_available is False when SHA-256 does not match."""
-    mock_piper = MagicMock()
+    bin_path = tmp_path / "piper"
+    bin_path.touch()
+    bin_path.chmod(0o755)
     onnx = tmp_path / "jarvis.onnx"
     onnx.write_bytes(b"corrupted")
     json_f = tmp_path / "jarvis.onnx.json"
     json_f.write_text("{}")
 
-    with patch.dict("sys.modules", {"piper": mock_piper}), \
+    with patch("tts._ensure_piper_binary", return_value=bin_path), \
          patch("tts._ONNX_PATH", onnx), \
          patch("tts._JSON_PATH", json_f), \
          patch("tts._sha256", return_value="badhash"), \
@@ -187,21 +183,9 @@ def test_piper_available_false_on_checksum_mismatch(tmp_path):
     assert tts.is_available() is False
 
 
-def test_piper_available_false_on_load_exception(tmp_path):
-    """_piper_available is False when PiperVoice.load raises."""
-    mock_piper = MagicMock()
-    mock_piper.PiperVoice.load.side_effect = RuntimeError("model corrupt")
-    onnx = tmp_path / "jarvis.onnx"
-    onnx.write_bytes(b"fake")
-    json_f = tmp_path / "jarvis.onnx.json"
-    json_f.write_text("{}")
-
-    with patch.dict("sys.modules", {"piper": mock_piper}), \
-         patch("tts._ONNX_PATH", onnx), \
-         patch("tts._JSON_PATH", json_f), \
-         patch("tts._sha256", return_value="deadbeef"), \
-         patch("tts.JARVIS_ONNX_SHA256", "deadbeef"), \
-         patch("tts.JARVIS_JSON_SHA256", "deadbeef"):
+def test_piper_available_false_on_load_exception():
+    """_piper_available is False when _ensure_piper_binary raises."""
+    with patch("tts._ensure_piper_binary", side_effect=RuntimeError("unexpected")):
         tts._load_model()
     assert tts.is_available() is False
 
