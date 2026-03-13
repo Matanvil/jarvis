@@ -9,7 +9,7 @@ import time
 import uuid as _uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, field_validator
 
 import alert_bus
@@ -344,7 +344,6 @@ async def tts_endpoint(req: TTSRequest):
     wav_bytes = await loop.run_in_executor(None, tts_module.synthesize, req.text)
     if wav_bytes is None:
         raise HTTPException(status_code=503, detail={"error": "piper unavailable"})
-    from fastapi.responses import Response
     return Response(content=wav_bytes, media_type="audio/wav")
 
 
