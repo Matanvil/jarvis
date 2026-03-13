@@ -38,6 +38,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Set notification delegate and request permission first — must precede any notification post.
+        UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            NSLog("[Jarvis] Notification permission: %@", granted ? "granted" : "denied")
+        }
+
         menuBarController = MenuBarController(
             onRestart: { [weak self] in
                 self?.startPythonCore()
@@ -133,8 +139,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             try? await center.add(req)
             return
         }
-        // Fallback: NSUserNotificationCenter — no permission needed, shows as "Jarvis".
-        // Deprecated but functional on macOS 15 for unsigned dev builds.
+        // Fallback: NSUserNotificationCenter (deprecated).
+        // Fires when status is .notDetermined (first launch, before user responds to the prompt)
+        // or .denied (user blocked notifications). In the denied case, this silently delivers
+        // a generic notification — a future improvement should surface a System Settings prompt instead.
         await MainActor.run {
             let n = NSUserNotification()
             n.title = title
@@ -142,6 +150,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             n.soundName = NSUserNotificationDefaultSoundName
             NSUserNotificationCenter.default.deliver(n)
         }
+    }
+
+    // Show notifications as banners even when the app is in the foreground.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
     }
 
     func applicationWillTerminate(_ notification: Notification) {
