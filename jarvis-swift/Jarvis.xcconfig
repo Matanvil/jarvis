@@ -1,0 +1,3 @@
+#include? "Local.xcconfig"
+// Jarvis base build settings.
+// Local overrides (e.g. DEVELOPMENT_TEAM) go in Local.xcconfig — see Local.xcconfig.example.
