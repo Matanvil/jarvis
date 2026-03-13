@@ -40,6 +40,7 @@ TOOL_TO_GUARDRAIL_CATEGORY = {
     "notify": "open_apps",
     "delegate_to_claude_code": "run_code_with_effects",
     "delegate_to_local": "run_shell",
+    "create_files": "file_create"
 }
 
 
