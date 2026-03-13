@@ -18,7 +18,7 @@ private final class TransparentHostingView<Content: View>: NSHostingView<Content
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
 
     private var pythonProcess: Process?
     private var isRestarting = false
