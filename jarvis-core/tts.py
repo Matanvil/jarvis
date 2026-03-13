@@ -12,12 +12,12 @@ _MODEL_DIR = Path.home() / ".jarvis" / "piper"
 _ONNX_PATH = _MODEL_DIR / "jarvis.onnx"
 _JSON_PATH = _MODEL_DIR / "jarvis.onnx.json"
 
-JARVIS_ONNX_URL = "https://huggingface.co/jgkawell/jarvis/resolve/main/en/en_GB/jarvis/medium/jarvis-medium.onnx"
-JARVIS_JSON_URL = "https://huggingface.co/jgkawell/jarvis/resolve/main/en/en_GB/jarvis/medium/jarvis-medium.onnx.json"
+JARVIS_ONNX_URL = "https://huggingface.co/jgkawell/jarvis/resolve/main/en/en_GB/jarvis/high/jarvis-high.onnx"
+JARVIS_JSON_URL = "https://huggingface.co/jgkawell/jarvis/resolve/main/en/en_GB/jarvis/high/jarvis-high.onnx.json"
 
-# Computed with: shasum -a 256 jarvis.onnx jarvis.onnx.json
-JARVIS_ONNX_SHA256 = "3f6534bd4050931b4c7d16ef777bafa2d90eb1e7baa8af9358623ffe609506da"
-JARVIS_JSON_SHA256 = "f2c2d77f64ed6e771fc7d2defa59cd47d6bd03c3e7602c732d63ea46954f2553"
+# Computed with: shasum -a 256 jarvis-high.onnx jarvis-high.onnx.json
+JARVIS_ONNX_SHA256 = "9791877d9c099fabbf30be2825e011451c39b3431e21e81e866f5b6507e72993"
+JARVIS_JSON_SHA256 = "d0b8772d81c1da2fcdfd79e90bff027f46f040450e1deb89b43a9f6b1946c5a7"
 
 _model = None
 _piper_available = None  # None = unknown, True/False after init
