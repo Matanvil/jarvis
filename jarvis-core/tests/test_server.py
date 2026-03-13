@@ -545,3 +545,67 @@ async def test_command_bg_error_dispatches_error_event():
         # Queue should have an error event
         event = dispatcher.queue.get_nowait()
         assert event["type"] == "error"
+
+
+# ── TTS endpoint ──────────────────────────────────────────────────────────
+
+@pytest.fixture
+def tts_client():
+    """TestClient with tts_module mocked (the import alias used in server.py)."""
+    with patch("server.tts_module") as mock_tts:
+        import server
+        client = TestClient(server.app, raise_server_exceptions=True)
+        yield client, mock_tts
+
+
+def test_tts_returns_wav_on_success(tts_client):
+    client, mock_tts = tts_client
+    mock_tts.synthesize.return_value = b"RIFF\x00\x00\x00\x00WAVEfmt "
+    response = client.post("/tts", json={"text": "Hello JARVIS"})
+    assert response.status_code == 200
+    assert "audio/wav" in response.headers["content-type"]
+    assert response.content == b"RIFF\x00\x00\x00\x00WAVEfmt "
+
+
+def test_tts_returns_503_when_piper_unavailable(tts_client):
+    client, mock_tts = tts_client
+    mock_tts.synthesize.return_value = None
+    response = client.post("/tts", json={"text": "Hello"})
+    assert response.status_code == 503
+    assert response.json()["detail"]["error"] == "piper unavailable"
+
+
+def test_tts_returns_400_on_empty_text(tts_client):
+    client, mock_tts = tts_client
+    response = client.post("/tts", json={"text": "   "})
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "text required"
+
+
+def test_tts_returns_422_on_missing_text(tts_client):
+    client, mock_tts = tts_client
+    response = client.post("/tts", json={})
+    assert response.status_code == 422  # pydantic validation
+
+
+def test_tts_lifespan_logs_availability(caplog):
+    """Lifespan startup logs Piper TTS availability."""
+    import logging
+    import server
+    with patch("server.tts_module") as mock_tts, \
+         patch("server._pipeline"), \
+         patch("server._loggers"), \
+         patch("server._guardrails"), \
+         patch("server.load_dependencies", return_value=(MagicMock(), MagicMock(), MagicMock(), MagicMock())), \
+         patch("server.Scheduler"), \
+         patch("server.sched_module"), \
+         patch("server._deferred_bot_start", new_callable=AsyncMock), \
+         patch("server.stop_bot", new_callable=AsyncMock), \
+         patch("server.alert_bus"), \
+         patch("server._ensure_ollama_running"):
+        mock_tts._load_model.return_value = True
+        mock_tts.is_available.return_value = True
+        with caplog.at_level(logging.INFO):
+            with TestClient(server.app, raise_server_exceptions=True):
+                pass
+    assert "Piper TTS available: True" in caplog.text

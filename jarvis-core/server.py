@@ -14,6 +14,7 @@ from pydantic import BaseModel, field_validator
 
 import alert_bus
 import config as cfg_module
+import tts as tts_module
 import logger as logger_module
 from command_pipeline import CommandPipeline
 from guardrails import Guardrails
@@ -72,6 +73,9 @@ def _ensure_ollama_running() -> None:
 async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
     _ensure_ollama_running()
+    # Eagerly load Piper TTS model in thread pool (downloads ~60MB if absent)
+    await asyncio.get_running_loop().run_in_executor(None, tts_module._load_model)
+    logging.info("Piper TTS available: %s", tts_module.is_available())
     alert_bus.set_loop(asyncio.get_running_loop())
     _pipeline, _loggers, _guardrails, store = load_dependencies()
     scheduler = Scheduler(store=store, pipeline=_pipeline)
@@ -326,6 +330,22 @@ def approve(req: ApprovalRequest):
 
 class ClassifyRequest(BaseModel):
     text: str
+
+
+class TTSRequest(BaseModel):
+    text: str
+
+
+@app.post("/tts")
+async def tts_endpoint(req: TTSRequest):
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail={"error": "text required"})
+    loop = asyncio.get_running_loop()
+    wav_bytes = await loop.run_in_executor(None, tts_module.synthesize, req.text)
+    if wav_bytes is None:
+        raise HTTPException(status_code=503, detail={"error": "piper unavailable"})
+    from fastapi.responses import Response
+    return Response(content=wav_bytes, media_type="audio/wav")
 
 
 def _classify_approval(text: str) -> bool | None:

@@ -9,3 +9,4 @@ python-telegram-bot==22.6
 APScheduler==3.10.4
 openai-whisper==20250625
 imageio-ffmpeg==0.6.0
+piper-tts==1.2.0  # optional: JARVIS voice. Server works without it (returns 503 → Swift falls back to Daniel).
