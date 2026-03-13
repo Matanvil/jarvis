@@ -54,13 +54,15 @@ def _load_model() -> bool:
                 _download(JARVIS_JSON_URL, _JSON_PATH)
 
             if _sha256(_ONNX_PATH) != JARVIS_ONNX_SHA256:
-                logger.error("ONNX checksum mismatch — deleting corrupted file")
+                logger.error("ONNX checksum mismatch — deleting model files for clean re-download")
                 _ONNX_PATH.unlink(missing_ok=True)
+                _JSON_PATH.unlink(missing_ok=True)
                 _piper_available = False
                 return False
 
             if _sha256(_JSON_PATH) != JARVIS_JSON_SHA256:
-                logger.error("JSON config checksum mismatch — deleting corrupted file")
+                logger.error("JSON config checksum mismatch — deleting model files for clean re-download")
+                _ONNX_PATH.unlink(missing_ok=True)
                 _JSON_PATH.unlink(missing_ok=True)
                 _piper_available = False
                 return False

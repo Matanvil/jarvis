@@ -57,7 +57,6 @@ def test_synthesize_returns_bytes_when_piper_available(tmp_path):
 
 
 def test_synthesize_returns_none_when_piper_not_installed():
-    import sys
     # Make 'from piper import PiperVoice' raise ImportError
     with patch.dict("sys.modules", {"piper": None}):
         result = tts.synthesize("Hello")
