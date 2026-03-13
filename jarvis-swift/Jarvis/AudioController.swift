@@ -5,7 +5,7 @@ import Speech
 private let _synthesizer = AVSpeechSynthesizer()
 
 @MainActor
-final class AudioController: NSObject, SFSpeechRecognizerDelegate {
+final class AudioController: NSObject, SFSpeechRecognizerDelegate, AVAudioPlayerDelegate {
 
     // MARK: - Hotkey config
     // Modifier-only hotkey: hold Control+Option to trigger.
@@ -31,6 +31,11 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     private var pendingApprovalCategory: String?
     private var lastCommandText: String?
     private var stepVoiceEnabled: Bool = false
+
+    // MARK: - Piper TTS state
+    private var _audioPlayer: AVAudioPlayer?       // strong ref prevents dealloc during playback
+    private var _ttsTask: URLSessionDataTask?       // current in-flight /tts request
+    private var _currentTempURL: URL?              // temp WAV file; deleted after playback
 
     // MARK: - Init
 
@@ -380,16 +385,100 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
 
     private func speak(_ text: String) {
         guard !text.isEmpty else { return }
+
+        // 1. Cancel and clean up prior state (order matters — delegate nil before stop)
+        _ttsTask?.cancel()
+        _ttsTask = nil
+        _audioPlayer?.delegate = nil
+        _audioPlayer?.stop()
+        _audioPlayer = nil
+        if let url = _currentTempURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+        _currentTempURL = nil
+
+        // 2. POST to Piper TTS endpoint
+        guard let url = URL(string: "http://127.0.0.1:8765/tts") else {
+            speakWithDaniel(text)
+            return
+        }
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["text": text])
+
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+
+                // 3. Validate response
+                guard error == nil,
+                      let http = response as? HTTPURLResponse,
+                      http.statusCode == 200,
+                      let contentType = http.value(forHTTPHeaderField: "Content-Type"),
+                      contentType.contains("audio/wav"),
+                      let data = data else {
+                    NSLog("[Jarvis] Piper TTS failed (network/status/content-type) — falling back to Daniel")
+                    self.speakWithDaniel(text)
+                    return
+                }
+
+                // 4. Write WAV to temp file
+                let tmpURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("jarvis_tts_\(UUID().uuidString).wav")
+                do {
+                    try data.write(to: tmpURL)
+                } catch {
+                    NSLog("[Jarvis] TTS temp file write failed: %@ — falling back to Daniel",
+                          error.localizedDescription)
+                    self.speakWithDaniel(text)
+                    return
+                }
+                self._currentTempURL = tmpURL
+
+                // 5. Init AVAudioPlayer and play
+                do {
+                    let player = try AVAudioPlayer(contentsOf: tmpURL)
+                    player.delegate = self
+                    self._audioPlayer = player
+                    player.play()
+                } catch {
+                    NSLog("[Jarvis] AVAudioPlayer init failed: %@ — falling back to Daniel",
+                          error.localizedDescription)
+                    try? FileManager.default.removeItem(at: tmpURL)
+                    self._currentTempURL = nil
+                    self.speakWithDaniel(text)
+                }
+            }
+        }
+        _ttsTask = task
+        task.resume()
+    }
+
+    // AVAudioPlayerDelegate — fires on both success and failure (flag=false).
+    // Must be nonisolated: AVFoundation dispatches callbacks on an arbitrary thread,
+    // and AudioController is @MainActor. Direct property mutation without the nonisolated
+    // marker causes a Swift 5.10 warning and a Swift 6 strict-concurrency error.
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let url = _currentTempURL {
+                try? FileManager.default.removeItem(at: url)
+                _currentTempURL = nil
+            }
+            _audioPlayer = nil
+        }
+    }
+
+    private func speakWithDaniel(_ text: String) {
         _synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text)
-        // British English "Daniel" — natural, professional male voice.
-        // Try premium first, fall back to compact, then any en-GB voice.
         utterance.voice =
             AVSpeechSynthesisVoice(identifier: "com.apple.ttsbundle.Daniel-premium") ??
             AVSpeechSynthesisVoice(identifier: "com.apple.voice.compact.en-GB.Daniel") ??
             AVSpeechSynthesisVoice(language: "en-GB")
         utterance.rate = 0.53
-        utterance.pitchMultiplier = 1.0 // neutral pitch for Daniel's natural tone
+        utterance.pitchMultiplier = 1.0
         _synthesizer.speak(utterance)
     }
 }
