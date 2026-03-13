@@ -9,5 +9,5 @@ python-telegram-bot==22.6
 APScheduler==3.10.4
 openai-whisper==20250625
 imageio-ffmpeg==0.6.0
-# piper-tts Python package not used — piper binary downloaded at runtime instead
-# (piper-phonemize has no macOS arm64 wheel; binary release bundles all deps)
+piper-tts==1.4.1  # optional: JARVIS voice. Server works without it (returns 503 → Swift falls back to Daniel).
+onnxruntime==1.24.3  # required by piper-tts
