@@ -206,7 +206,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private func killOrphanedServer(port: Int = 8765) {
         let cleanup = Process()
         cleanup.executableURL = URL(fileURLWithPath: "/bin/sh")
-        cleanup.arguments = ["-c", "lsof -ti :\(port) | xargs kill -9 2>/dev/null || true"]
+        cleanup.arguments = ["-c", "lsof -ti TCP:\(port) -sTCP:LISTEN | xargs kill -9 2>/dev/null || true"]
         try? cleanup.run()
         cleanup.waitUntilExit()
     }
