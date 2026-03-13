@@ -149,9 +149,60 @@ def test_load_model_thread_safe(tmp_path):
     assert all(r is True for r in results)
 
 
-def test_piper_available_false_on_all_failure_paths():
-    """_piper_available is False after import error, not None."""
+def test_piper_available_false_on_import_error():
+    """_piper_available is False after ImportError."""
     with patch.dict("sys.modules", {"piper": None}):
+        tts._load_model()
+    assert tts.is_available() is False
+
+
+def test_piper_available_false_on_download_failure(tmp_path):
+    """_piper_available is False when model download fails."""
+    mock_piper = MagicMock()
+    missing = tmp_path / "jarvis.onnx"
+    # file does not exist, download will be attempted
+
+    with patch.dict("sys.modules", {"piper": mock_piper}), \
+         patch("tts._ONNX_PATH", missing), \
+         patch("tts._JSON_PATH", tmp_path / "jarvis.onnx.json"), \
+         patch("tts._download", side_effect=OSError("download failed")):
+        tts._load_model()
+    assert tts.is_available() is False
+
+
+def test_piper_available_false_on_checksum_mismatch(tmp_path):
+    """_piper_available is False when SHA-256 does not match."""
+    mock_piper = MagicMock()
+    onnx = tmp_path / "jarvis.onnx"
+    onnx.write_bytes(b"corrupted")
+    json_f = tmp_path / "jarvis.onnx.json"
+    json_f.write_text("{}")
+
+    with patch.dict("sys.modules", {"piper": mock_piper}), \
+         patch("tts._ONNX_PATH", onnx), \
+         patch("tts._JSON_PATH", json_f), \
+         patch("tts._sha256", return_value="badhash"), \
+         patch("tts.JARVIS_ONNX_SHA256", "goodhash"), \
+         patch("tts.JARVIS_JSON_SHA256", "goodhash"):
+        tts._load_model()
+    assert tts.is_available() is False
+
+
+def test_piper_available_false_on_load_exception(tmp_path):
+    """_piper_available is False when PiperVoice.load raises."""
+    mock_piper = MagicMock()
+    mock_piper.PiperVoice.load.side_effect = RuntimeError("model corrupt")
+    onnx = tmp_path / "jarvis.onnx"
+    onnx.write_bytes(b"fake")
+    json_f = tmp_path / "jarvis.onnx.json"
+    json_f.write_text("{}")
+
+    with patch.dict("sys.modules", {"piper": mock_piper}), \
+         patch("tts._ONNX_PATH", onnx), \
+         patch("tts._JSON_PATH", json_f), \
+         patch("tts._sha256", return_value="deadbeef"), \
+         patch("tts.JARVIS_ONNX_SHA256", "deadbeef"), \
+         patch("tts.JARVIS_JSON_SHA256", "deadbeef"):
         tts._load_model()
     assert tts.is_available() is False
 
