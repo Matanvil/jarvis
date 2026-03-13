@@ -427,9 +427,11 @@ class Agent:
                 return {**format_response("I reached the maximum step limit.", tool_calls_made), "steps": steps}
 
             # Omit delegate_to_local when Ollama is down to avoid wasting a step.
+            # Omit notify for scheduled tasks — the scheduler fires the notification itself.
             available_tools = [
                 t for t in TOOL_DEFINITIONS
-                if t["name"] != "delegate_to_local" or ollama_available
+                if (t["name"] != "delegate_to_local" or ollama_available)
+                and (t["name"] != "notify" or source != "scheduled")
             ]
 
             response = self._client.messages.create(

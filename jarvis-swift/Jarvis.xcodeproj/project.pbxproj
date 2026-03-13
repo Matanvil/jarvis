@@ -115,7 +115,6 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					461D90920FCD8CAF83348871 = {
-						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -172,7 +171,6 @@
 				CODE_SIGN_ENTITLEMENTS = Jarvis/Jarvis.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = Jarvis/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -256,7 +254,6 @@
 				CODE_SIGN_ENTITLEMENTS = Jarvis/Jarvis.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = Jarvis/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

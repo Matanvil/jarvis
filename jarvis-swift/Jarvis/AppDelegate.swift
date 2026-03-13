@@ -40,8 +40,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Set notification delegate and request permission first — must precede any notification post.
         UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            NSLog("[Jarvis] Notification permission: %@", granted ? "granted" : "denied")
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            NSLog("[Jarvis] Notification status before request: %ld", settings.authorizationStatus.rawValue)
+        }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error = error {
+                NSLog("[Jarvis] Notification authorization error: %@", error.localizedDescription)
+            } else {
+                NSLog("[Jarvis] Notification permission: %@", granted ? "granted" : "denied")
+            }
         }
 
         menuBarController = MenuBarController(
