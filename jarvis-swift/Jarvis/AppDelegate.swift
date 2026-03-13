@@ -18,7 +18,7 @@ private final class TransparentHostingView<Content: View>: NSHostingView<Content
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
 
     private var pythonProcess: Process?
     private var isRestarting = false
@@ -38,6 +38,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Set notification delegate and request permission first — must precede any notification post.
+        UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            NSLog("[Jarvis] Notification status before request: %ld", settings.authorizationStatus.rawValue)
+        }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error = error {
+                NSLog("[Jarvis] Notification authorization error: %@", error.localizedDescription)
+            } else {
+                NSLog("[Jarvis] Notification permission: %@", granted ? "granted" : "denied")
+            }
+        }
+
         menuBarController = MenuBarController(
             onRestart: { [weak self] in
                 self?.startPythonCore()
@@ -133,8 +146,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             try? await center.add(req)
             return
         }
-        // Fallback: NSUserNotificationCenter — no permission needed, shows as "Jarvis".
-        // Deprecated but functional on macOS 15 for unsigned dev builds.
+        // Fallback: NSUserNotificationCenter (deprecated).
+        // Fires when status is .notDetermined (first launch, before user responds to the prompt)
+        // or .denied (user blocked notifications). In the denied case, this silently delivers
+        // a generic notification — a future improvement should surface a System Settings prompt instead.
         await MainActor.run {
             let n = NSUserNotification()
             n.title = title
@@ -142,6 +157,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             n.soundName = NSUserNotificationDefaultSoundName
             NSUserNotificationCenter.default.deliver(n)
         }
+    }
+
+    // Show notifications as banners even when the app is in the foreground.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -182,7 +206,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func killOrphanedServer(port: Int = 8765) {
         let cleanup = Process()
         cleanup.executableURL = URL(fileURLWithPath: "/bin/sh")
-        cleanup.arguments = ["-c", "lsof -ti :\(port) | xargs kill -9 2>/dev/null || true"]
+        cleanup.arguments = ["-c", "lsof -ti TCP:\(port) -sTCP:LISTEN | xargs kill -9 2>/dev/null || true"]
         try? cleanup.run()
         cleanup.waitUntilExit()
     }

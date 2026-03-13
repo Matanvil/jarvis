@@ -105,6 +105,32 @@ open Jarvis.xcodeproj
 
 ---
 
+## Building from source
+
+**Requirements:** macOS 13+, Xcode 15+, Python 3.11+
+
+### Swift app
+
+1. Copy `jarvis-swift/Local.xcconfig.example` → `jarvis-swift/Local.xcconfig`
+2. Open Xcode → Settings → Accounts, sign in with your Apple ID (free is fine)
+3. Find your Team ID: click your Apple ID row in the accounts list — the Team ID column shows the 10-character ID. Paste it into `Local.xcconfig`
+4. Open `jarvis-swift/Jarvis.xcodeproj` in Xcode and build with ⌘B
+
+On first launch, macOS will prompt for notification permission — click **Allow**.
+
+> **Without `Local.xcconfig`:** The app builds and runs but notifications fall back to the deprecated `NSUserNotificationCenter`. If you denied the permission prompt, re-enable in **System Settings → Notifications → Jarvis**.
+
+### Python core
+
+```bash
+cd jarvis-core
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+---
+
 ## Optional Features
 
 ### Telegram Integration

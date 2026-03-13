@@ -1,0 +1,4 @@
+// Copy this file to Local.xcconfig and fill in your Apple Developer Team ID.
+// Find it: Xcode → Settings → Accounts → click your Apple ID row — Team ID column shows the 10-character ID.
+// Local.xcconfig is gitignored — never commit it.
+DEVELOPMENT_TEAM =
