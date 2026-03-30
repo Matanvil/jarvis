@@ -40,6 +40,9 @@ TOOL_TO_GUARDRAIL_CATEGORY = {
     "notify": "open_apps",
     "delegate_to_claude_code": "run_code_with_effects",
     "delegate_to_local": "run_shell",
+    "coding_ask": "read_files",
+    "coding_plan": "read_files",
+    "coding_review": "read_files",
 }
 
 
@@ -58,6 +61,7 @@ def execute_tool(
     guardrails,
     default_cwd: str | None = None,
     local_agent=None,
+    coding=None,
 ) -> str:
     """Dispatch a tool call. Raises ApprovalRequiredError if guardrails block it."""
     if tool_name == "shell_run":
@@ -165,6 +169,41 @@ def execute_tool(
             timeout=_CLAUDE_CODE_TIMEOUT,
         )
         return r["stdout"] or r["stderr"] or f"exit_code={r['exit_code']}"
+    elif tool_name == "coding_ask":
+        if coding is None:
+            return "error: coding agent not available"
+        r = coding.ask(tool_input["question"], tool_input["cwd"])
+        if r["error"]:
+            return f"error: {r['error']}"
+        return r["answer"]
+    elif tool_name == "coding_plan":
+        if coding is None:
+            return "error: coding agent not available"
+        r = coding.plan(tool_input["task"], tool_input["cwd"])
+        if r["error"]:
+            return f"error: {r['error']}"
+        lines = [r["plan_summary"], ""]
+        for edit in r["edits"]:
+            lines.append(f"File: {edit['file']}")
+            lines.append(f"  {edit['description']}")
+            lines.append(f"  --- old ---")
+            lines.append(edit["old_code"])
+            lines.append(f"  --- new ---")
+            lines.append(edit["new_code"])
+            lines.append("")
+        return "\n".join(lines)
+    elif tool_name == "coding_review":
+        if coding is None:
+            return "error: coding agent not available"
+        r = coding.review(tool_input["cwd"], tool_input.get("context", ""))
+        if r["error"]:
+            return f"error: {r['error']}"
+        lines = [r["summary"], ""]
+        for issue in r["issues"]:
+            lines.append(f"[{issue['category'].upper()}] {issue['file']}: {issue['description']}")
+            if issue.get("recommendation"):
+                lines.append(f"  → {issue['recommendation']}")
+        return "\n".join(lines)
     return f"unknown tool: {tool_name}"
 
 
