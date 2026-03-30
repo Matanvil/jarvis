@@ -186,9 +186,9 @@ def execute_tool(
         for edit in r["edits"]:
             lines.append(f"File: {edit['file']}")
             lines.append(f"  {edit['description']}")
-            lines.append(f"  --- old ---")
+            lines.append("--- old ---")
             lines.append(edit["old_code"])
-            lines.append(f"  --- new ---")
+            lines.append("--- new ---")
             lines.append(edit["new_code"])
             lines.append("")
         return "\n".join(lines)

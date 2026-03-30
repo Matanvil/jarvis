@@ -411,6 +411,9 @@ _STEP_LABELS: dict[str, str] = {
     "open_app": "Opening app",
     "get_clipboard": "Reading clipboard",
     "set_clipboard": "Writing clipboard",
+    "coding_ask": "Asking codebase",
+    "coding_plan": "Planning edits",
+    "coding_review": "Reviewing changes",
 }
 
 
