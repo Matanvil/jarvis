@@ -1,0 +1,3 @@
+[submodule "jarvis-core/ai-coding-agent"]
+	path = jarvis-core/ai-coding-agent
+	url = git@github.com:Matanvil/ai-coding-agent.git

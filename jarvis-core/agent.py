@@ -8,6 +8,7 @@ from tools.shell import ShellTool
 from tools.web import WebTool
 from tools.code import CodeTool, SUPPORTED_LANGUAGES
 from tools.macos import MacOSTool
+from tools.coding_agent import CodingAgentTool
 from tools._dispatch import execute_tool, format_response, _claude_code_available as claude_code_available
 from tools._errors import ApprovalRequiredError
 
@@ -289,6 +290,62 @@ TOOL_DEFINITIONS = [
             "required": ["schedule_id"],
         },
     },
+    {
+        "name": "coding_ask",
+        "description": (
+            "Ask a question about the codebase in the given directory. "
+            "Uses semantic search over indexed code to answer questions about "
+            "architecture, specific functions, data flow, or behavior. "
+            "Auto-indexes the codebase on first use."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The question to ask about the codebase"},
+                "cwd": {"type": "string", "description": "Absolute path to the project directory"},
+            },
+            "required": ["question", "cwd"],
+        },
+    },
+    {
+        "name": "coding_plan",
+        "description": (
+            "Generate a multi-file edit plan to accomplish a coding task. "
+            "Searches the codebase and produces a list of specific file edits "
+            "(old_code → new_code) needed to complete the task. "
+            "Use this to plan refactors, new features, or bug fixes before applying them."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The coding task to plan (e.g. 'refactor auth into a service')",
+                },
+                "cwd": {"type": "string", "description": "Absolute path to the project directory"},
+            },
+            "required": ["task", "cwd"],
+        },
+    },
+    {
+        "name": "coding_review",
+        "description": (
+            "Review the uncommitted git changes in a project directory. "
+            "Runs git diff HEAD, searches the codebase for context, and returns "
+            "categorized issues: critical, important, or suggestion."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cwd": {"type": "string", "description": "Absolute path to the project directory"},
+                "context": {
+                    "type": "string",
+                    "description": "Optional context about what the changes are for",
+                },
+            },
+            "required": ["cwd"],
+        },
+    },
 ]
 
 SCHEDULE_TOOLS = {"create_schedule", "list_schedules", "delete_schedule", "pause_schedule", "resume_schedule"}
@@ -354,6 +411,9 @@ _STEP_LABELS: dict[str, str] = {
     "open_app": "Opening app",
     "get_clipboard": "Reading clipboard",
     "set_clipboard": "Writing clipboard",
+    "coding_ask": "Asking codebase",
+    "coding_plan": "Planning edits",
+    "coding_review": "Reviewing changes",
 }
 
 
@@ -382,6 +442,7 @@ class Agent:
         self._web = WebTool(brave_api_key=config.get("brave_api_key"))
         self._code = CodeTool()
         self._macos = MacOSTool()
+        self._coding = CodingAgentTool(config)
         self._logger = logging.getLogger("jarvis.commands")
         self._local_agent = local_agent
 
@@ -516,6 +577,7 @@ class Agent:
                             self._guardrails,
                             default_cwd=cwd,
                             local_agent=self._local_agent,
+                            coding=self._coding,
                         )
                     step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
                     tool_calls_made.append(block.name)
