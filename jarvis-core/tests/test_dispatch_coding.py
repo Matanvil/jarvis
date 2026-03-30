@@ -15,7 +15,7 @@ def make_guardrails(overrides=None):
     return Guardrails(config)
 
 
-def base_args(tool_name, tool_input, coding):
+def base_args(tool_name, tool_input):
     shell = MagicMock()
     web = MagicMock()
     code = MagicMock()
@@ -44,7 +44,7 @@ def test_coding_ask_dispatch_calls_coding_ask():
     """execute_tool routes coding_ask to coding.ask() with correct params."""
     coding = MagicMock()
     coding.ask.return_value = {"answer": "the router classifies intent", "error": None}
-    args = base_args("coding_ask", {"question": "what does the router do?", "cwd": "/tmp/proj"}, coding)
+    args = base_args("coding_ask", {"question": "what does the router do?", "cwd": "/tmp/proj"})
     result = execute_tool(*args, coding=coding)
     coding.ask.assert_called_once_with("what does the router do?", "/tmp/proj")
     assert result == "the router classifies intent"
@@ -60,7 +60,7 @@ def test_coding_plan_dispatch_calls_coding_plan():
         ],
         "error": None,
     }
-    args = base_args("coding_plan", {"task": "refactor auth", "cwd": "/tmp/proj"}, coding)
+    args = base_args("coding_plan", {"task": "refactor auth", "cwd": "/tmp/proj"})
     result = execute_tool(*args, coding=coding)
     coding.plan.assert_called_once_with("refactor auth", "/tmp/proj")
     assert "auth.py" in result
@@ -79,7 +79,7 @@ def test_coding_review_dispatch_calls_coding_review():
         ],
         "error": None,
     }
-    args = base_args("coding_review", {"cwd": "/tmp/proj", "context": "db changes"}, coding)
+    args = base_args("coding_review", {"cwd": "/tmp/proj", "context": "db changes"})
     result = execute_tool(*args, coding=coding)
     coding.review.assert_called_once_with("/tmp/proj", "db changes")
     assert "[CRITICAL]" in result
@@ -91,7 +91,7 @@ def test_coding_review_context_defaults_to_empty_string():
     """execute_tool passes empty string for context when not provided."""
     coding = MagicMock()
     coding.review.return_value = {"summary": "ok", "issues": [], "error": None}
-    args = base_args("coding_review", {"cwd": "/tmp/proj"}, coding)
+    args = base_args("coding_review", {"cwd": "/tmp/proj"})
     execute_tool(*args, coding=coding)
     coding.review.assert_called_once_with("/tmp/proj", "")
 
@@ -102,14 +102,14 @@ def test_coding_ask_returns_error_string_on_tool_error():
     """execute_tool returns error string when coding.ask returns error dict."""
     coding = MagicMock()
     coding.ask.return_value = {"answer": None, "error": "Ollama is not running"}
-    args = base_args("coding_ask", {"question": "q", "cwd": "/tmp"}, coding)
+    args = base_args("coding_ask", {"question": "q", "cwd": "/tmp"})
     result = execute_tool(*args, coding=coding)
     assert "Ollama is not running" in result
 
 
 def test_coding_ask_unavailable_when_coding_is_none():
     """execute_tool returns error string when coding param is None."""
-    args = base_args("coding_ask", {"question": "q", "cwd": "/tmp"}, None)
+    args = base_args("coding_ask", {"question": "q", "cwd": "/tmp"})
     result = execute_tool(*args, coding=None)
     assert "coding agent not available" in result
 
