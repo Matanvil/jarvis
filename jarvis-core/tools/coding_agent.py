@@ -38,7 +38,7 @@ class CodingAgentTool:
         collection_name = "repo_" + hashlib.md5(cwd.encode()).hexdigest()[:12]
         store = VectorStore(chroma_path=self._chroma_path, collection_name=collection_name)
 
-        if store._collection.count() == 0:
+        if store.count() == 0:
             index_repo(cwd, self._embedder, store)
 
         self._stores[cwd] = store
@@ -84,6 +84,8 @@ class CodingAgentTool:
                 capture_output=True,
                 text=True,
             )
+            if proc.returncode != 0:
+                return {"summary": None, "issues": None, "error": proc.stderr.strip() or "git diff failed"}
             diff = proc.stdout
             if not diff.strip():
                 return {"summary": None, "issues": None, "error": "No changes to review (git diff HEAD is empty)"}

@@ -38,7 +38,7 @@ def test_ensure_indexed_calls_index_repo_on_first_use(tmp_path):
          patch("tools.coding_agent.VectorStore") as MockStore, \
          patch("tools.coding_agent.index_repo") as mock_index:
         mock_store_instance = MagicMock()
-        mock_store_instance._collection.count.return_value = 0  # not yet indexed
+        mock_store_instance.count.return_value = 0  # not yet indexed
         MockStore.return_value = mock_store_instance
 
         tool = make_tool()
@@ -56,7 +56,7 @@ def test_ensure_indexed_skips_index_if_already_indexed(tmp_path):
          patch("tools.coding_agent.VectorStore") as MockStore, \
          patch("tools.coding_agent.index_repo") as mock_index:
         mock_store_instance = MagicMock()
-        mock_store_instance._collection.count.return_value = 42  # already indexed
+        mock_store_instance.count.return_value = 42  # already indexed
         MockStore.return_value = mock_store_instance
 
         tool = make_tool()
@@ -73,7 +73,7 @@ def test_ensure_indexed_reuses_store_on_second_call(tmp_path):
          patch("tools.coding_agent.VectorStore") as MockStore, \
          patch("tools.coding_agent.index_repo"):
         mock_store_instance = MagicMock()
-        mock_store_instance._collection.count.return_value = 0
+        mock_store_instance.count.return_value = 0
         MockStore.return_value = mock_store_instance
 
         tool = make_tool()
@@ -93,7 +93,7 @@ def test_ask_returns_answer(tmp_path):
          patch("tools.coding_agent.index_repo"), \
          patch("tools.coding_agent.AgentLoop") as MockLoop:
         mock_store = MagicMock()
-        mock_store._collection.count.return_value = 5
+        mock_store.count.return_value = 5
         MockStore.return_value = mock_store
 
         mock_loop = MagicMock()
@@ -117,7 +117,7 @@ def test_ask_returns_error_on_exception(tmp_path):
          patch("tools.coding_agent.index_repo"), \
          patch("tools.coding_agent.AgentLoop") as MockLoop:
         mock_store = MagicMock()
-        mock_store._collection.count.return_value = 5
+        mock_store.count.return_value = 5
         MockStore.return_value = mock_store
 
         MockLoop.return_value.ask.side_effect = Exception("Ollama is not running")
@@ -138,7 +138,7 @@ def test_ask_triggers_index_when_cwd_not_indexed(tmp_path):
          patch("tools.coding_agent.index_repo") as mock_index, \
          patch("tools.coding_agent.AgentLoop") as MockLoop:
         mock_store = MagicMock()
-        mock_store._collection.count.return_value = 0  # triggers indexing
+        mock_store.count.return_value = 0  # triggers indexing
         MockStore.return_value = mock_store
         MockLoop.return_value.ask.return_value = "answer"
 
@@ -177,7 +177,7 @@ def test_plan_returns_edits(tmp_path):
          patch("tools.coding_agent.index_repo"), \
          patch("tools.coding_agent.Planner") as MockPlanner:
         mock_store = MagicMock()
-        mock_store._collection.count.return_value = 5
+        mock_store.count.return_value = 5
         MockStore.return_value = mock_store
 
         mock_planner = MagicMock()
@@ -204,7 +204,7 @@ def test_plan_returns_error_on_planner_error(tmp_path):
          patch("tools.coding_agent.index_repo"), \
          patch("tools.coding_agent.Planner") as MockPlanner:
         mock_store = MagicMock()
-        mock_store._collection.count.return_value = 5
+        mock_store.count.return_value = 5
         MockStore.return_value = mock_store
 
         from tools.coding_agent import PlannerError
@@ -249,7 +249,7 @@ def test_review_returns_issues(tmp_path):
          patch("tools.coding_agent.Reviewer") as MockReviewer, \
          patch("tools.coding_agent.subprocess.run") as mock_run:
         mock_store = MagicMock()
-        mock_store._collection.count.return_value = 5
+        mock_store.count.return_value = 5
         MockStore.return_value = mock_store
 
         mock_proc = MagicMock()
@@ -281,7 +281,7 @@ def test_review_returns_error_when_no_diff(tmp_path):
          patch("tools.coding_agent.index_repo"), \
          patch("tools.coding_agent.subprocess.run") as mock_run:
         mock_store = MagicMock()
-        mock_store._collection.count.return_value = 5
+        mock_store.count.return_value = 5
         MockStore.return_value = mock_store
 
         mock_proc = MagicMock()
@@ -296,6 +296,31 @@ def test_review_returns_error_when_no_diff(tmp_path):
     assert "no changes" in result["error"].lower()
 
 
+def test_review_returns_error_when_git_diff_fails(tmp_path):
+    """review() returns error dict when git diff returns non-zero exit code."""
+    cwd = str(tmp_path)
+    with patch("tools.coding_agent.ClaudeClient"), \
+         patch("tools.coding_agent.OllamaEmbedder"), \
+         patch("tools.coding_agent.VectorStore") as MockStore, \
+         patch("tools.coding_agent.index_repo"), \
+         patch("tools.coding_agent.subprocess.run") as mock_run:
+        mock_store = MagicMock()
+        mock_store.count.return_value = 5
+        MockStore.return_value = mock_store
+
+        mock_proc = MagicMock()
+        mock_proc.stdout = ""
+        mock_proc.returncode = 128  # git error (not a git repo)
+        mock_proc.stderr = "fatal: not a git repository"
+        mock_run.return_value = mock_proc
+
+        tool = make_tool()
+        result = tool.review(cwd)
+
+    assert result["issues"] is None
+    assert result["error"] is not None
+
+
 def test_review_returns_error_on_reviewer_error(tmp_path):
     """review() returns error dict when ReviewerError is raised."""
     cwd = str(tmp_path)
@@ -306,7 +331,7 @@ def test_review_returns_error_on_reviewer_error(tmp_path):
          patch("tools.coding_agent.Reviewer") as MockReviewer, \
          patch("tools.coding_agent.subprocess.run") as mock_run:
         mock_store = MagicMock()
-        mock_store._collection.count.return_value = 5
+        mock_store.count.return_value = 5
         MockStore.return_value = mock_store
 
         mock_proc = MagicMock()
