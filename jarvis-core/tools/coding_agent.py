@@ -10,6 +10,8 @@ from src.planner import Planner, PlannerError
 from src.reviewer import Reviewer, ReviewerError
 from src.indexer import index_repo
 from src.llm import ClaudeClient
+from src.ollama_client import OllamaClient
+from src.hybrid_client import HybridClient
 from src.embedder import OllamaEmbedder
 from src.store import VectorStore
 
@@ -19,10 +21,19 @@ _CHROMA_PATH = os.path.expanduser("~/.jarvis/coding-agent-chroma")
 
 class CodingAgentTool:
     def __init__(self, config: dict):
-        self._llm = ClaudeClient(
+        ollama_host = config.get("ollama", {}).get("host", "http://localhost:11434")
+        claude = ClaudeClient(
             model=config.get("models", {}).get("haiku", "claude-haiku-4-5-20251001"),
             api_key=config["anthropic_api_key"],
         )
+        local_model = config.get("local_model", "")
+        if local_model:
+            self._llm = HybridClient(
+                ollama=OllamaClient(model=local_model, base_url=ollama_host),
+                claude=claude,
+            )
+        else:
+            self._llm = claude
         self._embedder = OllamaEmbedder(
             model="nomic-embed-text",
             base_url=config.get("ollama", {}).get("host", "http://localhost:11434"),

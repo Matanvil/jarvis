@@ -50,6 +50,7 @@ DEFAULTS = {
         "bot_token": "",
         "allowed_user_id": 0,
     },
+    "local_model": "",
 }
 
 
