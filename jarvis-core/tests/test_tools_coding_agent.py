@@ -30,6 +30,22 @@ def test_init_creates_components():
     )
 
 
+def test_init_uses_hybrid_client_when_local_model_set():
+    """CodingAgentTool uses HybridClient(OllamaClient, ClaudeClient) when local_model is set."""
+    config = {**CONFIG, "local_model": "qwen3-coder:30b"}
+    with patch("tools.coding_agent.ClaudeClient") as MockClaude, \
+         patch("tools.coding_agent.OllamaClient") as MockOllama, \
+         patch("tools.coding_agent.HybridClient") as MockHybrid, \
+         patch("tools.coding_agent.OllamaEmbedder"):
+        tool = CodingAgentTool(config)
+    MockOllama.assert_called_once_with(model="qwen3-coder:30b", base_url="http://localhost:11434")
+    MockHybrid.assert_called_once_with(
+        ollama=MockOllama.return_value,
+        claude=MockClaude.return_value,
+    )
+    assert tool._llm is MockHybrid.return_value
+
+
 def test_ensure_indexed_calls_index_repo_on_first_use(tmp_path):
     """_ensure_indexed indexes the repo on first call for a cwd."""
     cwd = str(tmp_path)
