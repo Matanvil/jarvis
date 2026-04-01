@@ -253,7 +253,7 @@ async def events(command_id: str):
     async def stream():
         try:
             while True:
-                event = await asyncio.wait_for(dispatcher.queue.get(), timeout=120.0)
+                event = await asyncio.wait_for(dispatcher.queue.get(), timeout=300.0)
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("type") in ("complete", "error"):
                     break
