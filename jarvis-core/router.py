@@ -25,7 +25,7 @@ Rules for intent_class:
 - read_only: just reading or querying, no changes (list files, read a file, show status)
 - prepare: will make changes the user should preview (generate code, draft text, move files)
 - destructive: deletes files, sends messages, modifies system settings, irreversible actions
-- complex_reasoning: needs web search, external data, or multi-step analysis"""
+- complex_reasoning: needs web search, real-time data, or external information not available locally (news, prices, current events, remote APIs). Reading files, searching code, running shell commands, or analyzing local projects is NOT complex_reasoning."""
 
 
 class Router:
@@ -155,7 +155,7 @@ class Router:
 
             # Non-complex: use local OllamaAgent (qwen-executor); escalate to Sonnet on failure
             try:
-                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, step_callback=step_callback)
+                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, step_callback=step_callback, intent_class=intent_class)
                 self._update_history(text, result)
                 return self._annotate(result, agent="ollama", model=self._ollama_model,
                                       escalated=False, escalation_reason=None,
@@ -196,7 +196,7 @@ class Router:
         escalation_reason = None
         if mode == "ollama_only" or can_handle_locally:
             try:
-                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history)
+                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, intent_class=intent_class)
                 self._update_history(text, result)
                 return self._annotate(result, agent="ollama", model=self._ollama_model,
                                       escalated=False, escalation_reason=None,

@@ -127,7 +127,8 @@ class OllamaAgent:
         return float(self._config.get("ollama", {}).get("timeout_seconds", 30))
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
-            history: list | None = None, step_callback=None) -> dict:
+            history: list | None = None, step_callback=None,
+            intent_class: str | None = None) -> dict:
         """Run Ollama tool-use loop. Raises EscalateToCloud if Ollama can't handle it.
         Returns same dict shape as Agent.run()."""
         system_msg = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~")) + _OLLAMA_EXTRA
@@ -143,7 +144,11 @@ class OllamaAgent:
         ]
         tool_calls_made = []
         steps = []
-        max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 10))
+        budgets = self._config.get("reasoning", {}).get("step_budgets", {})
+        if intent_class and intent_class in budgets:
+            max_steps = int(budgets[intent_class])
+        else:
+            max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 10))
         stall_detection = self._config.get("reasoning", {}).get("stall_detection", True)
         last_tool_call = None        # (tool_name, args_key) for exact stall detection
         recent_tools: list = []      # sliding window of last 5 tool names for near-duplicate detection
