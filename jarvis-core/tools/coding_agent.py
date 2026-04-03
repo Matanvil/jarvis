@@ -1,7 +1,10 @@
 import hashlib
+import logging
 import os
 import subprocess
 import sys
+
+_log = logging.getLogger("jarvis.coding_agent")
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ai-coding-agent')))
 
@@ -56,15 +59,26 @@ class CodingAgentTool:
         return store
 
     def ask(self, question: str, cwd: str) -> dict:
+        llm_model = getattr(self._llm, "model", "unknown")
+        _log.info("coding_ask starting — model=%s cwd=%s", llm_model, cwd)
         try:
             store = self._ensure_indexed(cwd)
             loop = AgentLoop(self._llm, self._embedder, store, repo_root=cwd)
-            answer = loop.ask(question)
+
+            def _on_event(event: str, data: dict) -> None:
+                if event == "model_fallback":
+                    _log.warning("coding_ask model fallback — kind=%s reason=%s", data.get("kind"), data.get("reason"))
+
+            answer = loop.ask(question, on_event=_on_event)
             return {"answer": answer, "error": None}
         except Exception as e:
+            _log.error("coding_ask failed — %s", e)
             return {"answer": None, "error": str(e)}
 
     def plan(self, task: str, cwd: str) -> dict:
+        # Planner calls llm.client.messages.create() directly — always uses Claude (not local model)
+        llm_model = getattr(self._llm, "model", "unknown")
+        _log.info("coding_plan starting — model=%s (direct API, local model bypassed) cwd=%s", llm_model, cwd)
         try:
             store = self._ensure_indexed(cwd)
             planner = Planner(self._llm, self._embedder, store, repo_root=cwd)
@@ -83,11 +97,16 @@ class CodingAgentTool:
                 summary_lines.append(f"• {e.file}: {e.description}")
             return {"plan_summary": "\n".join(summary_lines), "edits": edits, "error": None}
         except PlannerError as e:
+            _log.error("coding_plan failed — %s", e)
             return {"plan_summary": None, "edits": None, "error": str(e)}
         except Exception as e:
+            _log.error("coding_plan failed — %s", e)
             return {"plan_summary": None, "edits": None, "error": str(e)}
 
     def review(self, cwd: str, context: str = "") -> dict:
+        # Reviewer calls llm.client.messages.create() directly — always uses Claude (not local model)
+        llm_model = getattr(self._llm, "model", "unknown")
+        _log.info("coding_review starting — model=%s (direct API, local model bypassed) cwd=%s", llm_model, cwd)
         try:
             proc = subprocess.run(
                 ["git", "diff", "HEAD"],
@@ -115,6 +134,8 @@ class CodingAgentTool:
             ]
             return {"summary": result.summary, "issues": issues, "error": None}
         except ReviewerError as e:
+            _log.error("coding_review failed — %s", e)
             return {"summary": None, "issues": None, "error": str(e)}
         except Exception as e:
+            _log.error("coding_review failed — %s", e)
             return {"summary": None, "issues": None, "error": str(e)}

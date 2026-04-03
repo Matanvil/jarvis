@@ -302,7 +302,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         let stepVoice = stepVoiceEnabled
         guard let url = URL(string: "http://127.0.0.1:8765/events/\(commandId)") else { return }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 180
+        request.timeoutInterval = 600
 
         do {
             let (stream, _) = try await URLSession.shared.bytes(for: request)
