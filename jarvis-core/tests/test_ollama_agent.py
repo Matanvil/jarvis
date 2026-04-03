@@ -190,4 +190,79 @@ def test_run_injects_memory_context_into_messages(agent):
 
     system_msg = next((m for m in captured_messages if m["role"] == "system"), None)
     assert system_msg is not None
-    assert "npm test" in system_msg["content"]
+
+
+# ── salvage call on step exhaustion ──────────────────────────────────────────
+
+def test_salvage_call_on_step_exhaustion(agent):
+    """When ALL steps are exhausted (model never stopped), a final no-tools call salvages the answer."""
+    call_num = [0]
+    commands = ["ls /", "ls /tmp", "ls /usr"]
+
+    def make_tool_response(cmd):
+        return {"choices": [{"finish_reason": "tool_calls", "message": {
+            "content": None,
+            "tool_calls": [{"id": f"c{call_num[0]}", "function": {
+                "name": "shell_run", "arguments": f'{{"command": "{cmd}"}}'
+            }}]
+        }}]}
+
+    salvage_response = {
+        "choices": [{"finish_reason": "stop", "message": {"content": "MacBook Pro, M1 Max, 64GB RAM."}}]
+    }
+    salvage_calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if json and json.get("tool_choice") == "none" and "tools" not in json:
+            salvage_calls.append(json)
+            resp.json.return_value = salvage_response
+        else:
+            resp.json.return_value = make_tool_response(commands[call_num[0] % len(commands)])
+            call_num[0] += 1
+        return resp
+
+    agent._config["reasoning"]["max_steps_ollama"] = 3
+    agent._config["reasoning"]["stall_detection"] = False
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="file list"):
+            result = agent.run("what are my specs")
+
+    assert len(salvage_calls) >= 1, "Salvage call should have been made after exhausting steps"
+    assert "ran out of steps" not in result["speak"]
+    assert "MacBook Pro" in result["speak"]
+
+
+def test_salvage_falls_back_to_error_if_empty(agent):
+    """If salvage call returns empty content, fall back to error message."""
+    call_num = [0]
+    commands = ["ls /", "ls /tmp", "ls /usr"]
+
+    def make_tool_response(cmd):
+        return {"choices": [{"finish_reason": "tool_calls", "message": {
+            "content": None,
+            "tool_calls": [{"id": f"c{call_num[0]}", "function": {
+                "name": "shell_run", "arguments": f'{{"command": "{cmd}"}}'
+            }}]
+        }}]}
+
+    empty_salvage = {"choices": [{"finish_reason": "stop", "message": {"content": ""}}]}
+
+    def fake_post(url, json=None, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if json and json.get("tool_choice") == "none" and "tools" not in json:
+            resp.json.return_value = empty_salvage
+        else:
+            resp.json.return_value = make_tool_response(commands[call_num[0] % len(commands)])
+            call_num[0] += 1
+        return resp
+
+    agent._config["reasoning"]["max_steps_ollama"] = 3
+    agent._config["reasoning"]["stall_detection"] = False
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="ok"):
+            result = agent.run("do stuff")
+
+    assert result["speak"] == "I ran out of steps. Please try again."

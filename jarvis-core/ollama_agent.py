@@ -121,13 +121,28 @@ class OllamaAgent:
         ]
         tool_calls_made = []
         steps = []
-        max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 5))
+        max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 10))
+        stall_detection = self._config.get("reasoning", {}).get("stall_detection", True)
+        last_tool_call = None  # (tool_name, args_key) for stall detection
+        force_finish = False
 
         try:
-            for _ in range(max_steps):
+            for step_idx in range(max_steps):
+                # Past halfway and tools have been used — force a final text response
+                if not force_finish and step_idx >= max_steps // 2 and steps:
+                    force_finish = True
+                    messages.append({
+                        "role": "user",
+                        "content": "You have gathered enough information. Please give your final answer now based on what you have found so far.",
+                    })
+
+                payload = {"model": self._model, "messages": messages, "tools": _OLLAMA_TOOLS}
+                if force_finish:
+                    payload["tool_choice"] = "none"
+
                 resp = self._http_client.post(
                     f"{self._host}/v1/chat/completions",
-                    json={"model": self._model, "messages": messages, "tools": _OLLAMA_TOOLS},
+                    json=payload,
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -153,6 +168,29 @@ class OllamaAgent:
                         messages.append({"role": "tool", "tool_call_id": call_id,
                                          "content": f"error: malformed tool arguments — {e}. Please retry with valid JSON."})
                         continue
+
+                    # Stall detection: same tool + same args twice in a row → break
+                    if stall_detection:
+                        try:
+                            current_call = (name, frozenset(args.items()) if isinstance(args, dict) else str(args))
+                        except TypeError:
+                            current_call = (name, str(args))
+                        if current_call == last_tool_call:
+                            messages.append({
+                                "role": "user",
+                                "content": "You already tried this exact action. Please try a different approach or conclude with what you know.",
+                            })
+                            # Force one more completion without tools to get a response
+                            resp2 = self._http_client.post(
+                                f"{self._host}/v1/chat/completions",
+                                json={"model": self._model, "messages": messages},
+                            )
+                            resp2.raise_for_status()
+                            text = _clean_ollama_text(resp2.json()["choices"][0]["message"].get("content") or "")
+                            result = format_response(text, tool_calls_made)
+                            result["steps"] = steps
+                            return result
+                        last_tool_call = current_call
 
                     step = {"tool": name, "input_summary": str(args)[:100], "result_summary": "", "milestone": len(steps) == 0}
                     steps.append(step)
@@ -184,6 +222,23 @@ class OllamaAgent:
             raise EscalateToCloud(f"Ollama timeout: {e}")
         except httpx.HTTPStatusError as e:
             raise EscalateToCloud(f"Ollama HTTP error: {e}")
+
+        # Salvage: one final no-tools call to emit whatever the model gathered
+        try:
+            salvage_resp = self._http_client.post(
+                f"{self._host}/v1/chat/completions",
+                json={"model": self._model, "messages": messages, "tool_choice": "none"},
+            )
+            salvage_resp.raise_for_status()
+            salvage_text = _clean_ollama_text(
+                salvage_resp.json()["choices"][0]["message"].get("content") or ""
+            )
+            if salvage_text:
+                result = format_response(salvage_text, tool_calls_made)
+                result["steps"] = steps
+                return result
+        except Exception:
+            pass
 
         result = format_response("I ran out of steps. Please try again.", tool_calls_made)
         result["steps"] = steps
