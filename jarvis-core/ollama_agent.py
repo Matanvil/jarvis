@@ -145,7 +145,10 @@ class OllamaAgent:
         steps = []
         max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 10))
         stall_detection = self._config.get("reasoning", {}).get("stall_detection", True)
-        last_tool_call = None  # (tool_name, args_key) for stall detection
+        last_tool_call = None        # (tool_name, args_key) for exact stall detection
+        recent_tools: list = []      # sliding window of last 5 tool names for near-duplicate detection
+        _WINDOW = 5
+        _NEAR_DUP_THRESHOLD = 3     # same tool ≥ 3 times in window → redundant
 
         try:
             for step_idx in range(max_steps):
@@ -190,7 +193,30 @@ class OllamaAgent:
                         result["steps"] = steps
                         return result
 
-                    # Stall detection: same tool + same args twice in a row → break
+                    # Near-duplicate detection: same tool dominates recent window → salvage
+                    recent_tools.append(name)
+                    if len(recent_tools) > _WINDOW:
+                        recent_tools.pop(0)
+                    if stall_detection and recent_tools.count(name) >= _NEAR_DUP_THRESHOLD and steps:
+                        messages.append({
+                            "role": "user",
+                            "content": f"You have called '{name}' {recent_tools.count(name)} times with similar inputs and similar results. Stop and respond with what you already know.",
+                        })
+                        try:
+                            nr = self._http_client.post(
+                                f"{self._host}/v1/chat/completions",
+                                json={"model": self._model, "messages": messages, "tool_choice": "none"},
+                            )
+                            nr.raise_for_status()
+                            nr_text = _clean_ollama_text(nr.json()["choices"][0]["message"].get("content") or "")
+                            if nr_text:
+                                result = format_response(nr_text, tool_calls_made)
+                                result["steps"] = steps
+                                return result
+                        except Exception:
+                            pass
+
+                    # Exact stall detection: same tool + same args twice in a row → break
                     if stall_detection:
                         try:
                             current_call = (name, frozenset(args.items()) if isinstance(args, dict) else str(args))

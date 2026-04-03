@@ -224,7 +224,6 @@ def test_salvage_call_on_step_exhaustion(agent):
         return resp
 
     agent._config["reasoning"]["max_steps_ollama"] = 3
-    agent._config["reasoning"]["stall_detection"] = False
     with patch.object(agent._http_client, "post", side_effect=fake_post):
         with patch("ollama_agent.execute_tool", return_value="file list"):
             result = agent.run("what are my specs")
@@ -333,3 +332,46 @@ def test_finalize_tool_is_in_ollama_tools_schema(agent):
     from ollama_agent import _OLLAMA_TOOLS
     tool_names = [t["function"]["name"] for t in _OLLAMA_TOOLS]
     assert "finalize" in tool_names
+
+
+# ── near-duplicate redundancy detection ──────────────────────────────────────
+
+def test_near_duplicate_detection_stops_redundant_loop(agent):
+    """Same tool called 3 times in a 5-step window triggers salvage and stops loop."""
+    call_num = [0]
+    # 4 slightly-different find commands — same tool, near-identical args
+    commands = [
+        "find ~/dev -name '*.py' | wc -l",
+        "find ~/dev -name '*.py' -not -path '*cache*' | wc -l",
+        "find ~/dev -name '*.py' -not -path '*__pycache__*' | wc -l",
+        "find ~/dev -name '*.py' -not -path '*/.venv/*' | wc -l",
+    ]
+
+    salvage_response = {"choices": [{"finish_reason": "stop",
+                                      "message": {"content": "Found 100 Python files."}}]}
+
+    def fake_post(url, json=None, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if json and json.get("tool_choice") == "none":
+            resp.json.return_value = salvage_response
+        else:
+            cmd = commands[call_num[0] % len(commands)]
+            call_num[0] += 1
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": f"c{call_num[0]}", "function": {
+                    "name": "shell_run",
+                    "arguments": f'{{"command": "{cmd}"}}'
+                }}]
+            }}]}
+        return resp
+
+    agent._config["reasoning"]["max_steps_ollama"] = 10
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="   100"):
+            result = agent.run("how many python files")
+
+    assert len(result["steps"]) < 10, "Should have stopped before using all 10 steps"
+    assert "ran out of steps" not in result["speak"]
+    assert "100 Python files" in result["speak"]
