@@ -6,7 +6,7 @@ from guardrails import Guardrails
 from ollama_agent import OllamaAgent, EscalateToCloud
 from agent import Agent, claude_code_available
 
-_VALID_ROUTING_MODES = {"ollama_first", "claude_only", "ollama_only", "haiku_first"}
+_VALID_ROUTING_MODES = {"ollama_first", "claude_only", "ollama_only", "haiku_first", "local_first"}
 
 _CLASSIFY_SYSTEM_PROMPT = """You are a command classifier. Analyze the user request and return ONLY a JSON object — no other text.
 
@@ -72,6 +72,11 @@ class Router:
         return self._config.get("ollama", {}).get("model", "mistral:latest")
 
     @property
+    def _classifier_model(self) -> str:
+        ollama_cfg = self._config.get("ollama", {})
+        return ollama_cfg.get("classifier_model", ollama_cfg.get("model", "mistral:latest"))
+
+    @property
     def _ollama_host(self) -> str:
         return self._config.get("ollama", {}).get("host", "http://localhost:11434")
 
@@ -86,7 +91,7 @@ class Router:
             resp = client.post(
                 f"{self._ollama_host}/v1/chat/completions",
                 json={
-                    "model": self._ollama_model,
+                    "model": self._classifier_model,
                     "messages": [
                         {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
                         {"role": "user", "content": text},
@@ -127,6 +132,45 @@ class Router:
             return self._annotate(result, agent="claude", model=model_name,
                                   escalated=False, escalation_reason=classification.get("reason"),
                                   intent_class=intent_class, start=start)
+
+        # local_first: pre-flight classifies → OllamaAgent for non-complex, Sonnet for complex_reasoning
+        if mode == "local_first":
+            classification = {"can_handle_locally": True, "intent_class": "read_only", "reason": "fallback"}
+            try:
+                classification = self._classify(text)
+            except Exception as e:
+                logging.getLogger("jarvis.errors").warning(
+                    f"Pre-flight classifier failed: {e} — using local executor"
+                )
+
+            intent_class = classification.get("intent_class", "read_only")
+            if intent_class == "complex_reasoning":
+                result = self._sonnet.run(text, cwd=cwd, memory_context=memory_context, history=self._history,
+                                          source=source, step_callback=step_callback)
+                self._update_history(text, result)
+                model_name = self._config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
+                return self._annotate(result, agent="claude", model=model_name,
+                                      escalated=False, escalation_reason=classification.get("reason"),
+                                      intent_class=intent_class, start=start)
+
+            # Non-complex: use local OllamaAgent (qwen-executor); escalate to Sonnet on failure
+            try:
+                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history)
+                self._update_history(text, result)
+                return self._annotate(result, agent="ollama", model=self._ollama_model,
+                                      escalated=False, escalation_reason=None,
+                                      intent_class=intent_class, start=start)
+            except EscalateToCloud as e:
+                logging.getLogger("jarvis.errors").warning(
+                    f"Local executor escalated to Sonnet: {e.reason}"
+                )
+                result = self._sonnet.run(text, cwd=cwd, memory_context=memory_context, history=self._history,
+                                          ollama_available=False, source=source, step_callback=step_callback)
+                self._update_history(text, result)
+                model_name = self._config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
+                return self._annotate(result, agent="claude", model=model_name,
+                                      escalated=True, escalation_reason=e.reason,
+                                      intent_class=intent_class, start=start)
 
         # claude_only: skip classifier entirely
         if mode == "claude_only":

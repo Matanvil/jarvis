@@ -291,6 +291,70 @@ def test_intent_class_destructive_annotated_in_metadata(config):
     assert result.get("_intent_class") == "destructive"
 
 
+# ── routing_mode: local_first ────────────────────────────────────────────────
+
+@pytest.fixture
+def local_first_router(config, mock_ollama_agent, mock_haiku_agent, mock_sonnet_agent):
+    config["ollama"]["routing_mode"] = "local_first"
+    config["ollama"]["model"] = "qwen-executor"
+    config["ollama"]["classifier_model"] = "jarvis-classifier"
+    guardrails = Guardrails(config)
+    r = Router(config=config, guardrails=guardrails)
+    r._ollama = mock_ollama_agent
+    r._haiku = mock_haiku_agent
+    r._sonnet = mock_sonnet_agent
+    r._claude = mock_sonnet_agent
+    return r
+
+
+def test_local_first_uses_ollama_for_simple_tasks(local_first_router, mock_ollama_agent, mock_sonnet_agent):
+    result = local_first_router.process("list my files")
+    mock_ollama_agent.run.assert_called_once()
+    mock_sonnet_agent.run.assert_not_called()
+    assert result["_agent"] == "ollama"
+    assert result["_model"] == "qwen-executor"
+
+
+def test_local_first_uses_sonnet_for_complex_reasoning(local_first_router, mock_ollama_agent, mock_sonnet_agent):
+    local_first_router._classify = MagicMock(return_value={
+        "can_handle_locally": False, "intent_class": "complex_reasoning", "reason": "needs web"
+    })
+    result = local_first_router.process("search the web for latest news")
+    mock_ollama_agent.run.assert_not_called()
+    mock_sonnet_agent.run.assert_called_once()
+    assert result["_agent"] == "claude"
+    assert result["_model"] == "claude-sonnet-4-6"
+
+
+def test_local_first_escalates_to_sonnet_on_raise(local_first_router, mock_ollama_agent, mock_sonnet_agent):
+    from ollama_agent import EscalateToCloud
+    local_first_router._classify = MagicMock(return_value={
+        "can_handle_locally": True, "intent_class": "read_only", "reason": "simple"
+    })
+    mock_ollama_agent.run.side_effect = EscalateToCloud("too complex")
+    result = local_first_router.process("do something hard")
+    mock_sonnet_agent.run.assert_called_once()
+    assert result["_escalated"] is True
+    assert result["_escalation_reason"] == "too complex"
+
+
+def test_local_first_classifier_failure_falls_back_to_ollama(local_first_router, mock_ollama_agent, mock_sonnet_agent):
+    local_first_router._classify = MagicMock(side_effect=Exception("classifier down"))
+    result = local_first_router.process("hello")
+    mock_ollama_agent.run.assert_called_once()
+    mock_sonnet_agent.run.assert_not_called()
+
+
+def test_classifier_uses_classifier_model(config):
+    """_classifier_model should use classifier_model key when present."""
+    config["ollama"]["model"] = "qwen-executor"
+    config["ollama"]["classifier_model"] = "jarvis-classifier"
+    guardrails = Guardrails(config)
+    r = Router(config=config, guardrails=guardrails)
+    assert r._classifier_model == "jarvis-classifier"
+    assert r._ollama_model == "qwen-executor"
+
+
 # ── history tool summary ──────────────────────────────────────────────────────
 
 def test_history_includes_tools_used_when_steps_present(haiku_router, mock_haiku_agent):
