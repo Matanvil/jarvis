@@ -18,6 +18,8 @@ CRITICAL RULES FOR THIS MODEL:
 - ALWAYS use the provided tool/function calls to take action. NEVER write tool calls as JSON text in your response.
 - If you need to run a command or write a file, call the tool — do not describe it in text.
 - NEVER claim to have performed an action without first calling the tool. No tool call = no action taken.
+- Be efficient: once you have enough information to answer, stop calling tools and respond. Do NOT keep gathering extra data beyond what the user asked for.
+- You have a limited number of tool calls. Use only what is needed — typically 1-3 calls. Do not explore tangents.
 """
 
 
@@ -119,9 +121,10 @@ class OllamaAgent:
         ]
         tool_calls_made = []
         steps = []
+        max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 5))
 
         try:
-            for _ in range(10):
+            for _ in range(max_steps):
                 resp = self._http_client.post(
                     f"{self._host}/v1/chat/completions",
                     json={"model": self._model, "messages": messages, "tools": _OLLAMA_TOOLS},
