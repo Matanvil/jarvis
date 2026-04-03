@@ -96,6 +96,8 @@ class OllamaAgent:
         self._web = WebTool(brave_api_key=config.get("brave_api_key"))
         self._code = CodeTool()
         self._macos = MacOSTool()
+        from tools.coding_agent import CodingAgentTool
+        self._coding = CodingAgentTool(config)
         # Shared client reuses TCP connection to the persistent Ollama process.
         # Note: if timeout is updated via POST /config after construction, the
         # existing client will not pick up the new value — acceptable for now.
@@ -250,7 +252,7 @@ class OllamaAgent:
                         from agent import _step_label
                         step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": True})
                     try:
-                        result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=cwd)
+                        result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=cwd, coding=self._coding)
                         step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
                         tool_calls_made.append(name)
                     except ApprovalRequiredError as e:

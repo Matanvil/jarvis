@@ -487,3 +487,72 @@ def test_near_duplicate_detection_stops_redundant_loop(agent):
     assert len(result["steps"]) < 10, "Should have stopped before using all 10 steps"
     assert "ran out of steps" not in result["speak"]
     assert "100 Python files" in result["speak"]
+
+
+# ── coding agent wiring ───────────────────────────────────────────────────────
+
+def test_ollama_agent_has_coding_agent(agent):
+    """OllamaAgent should have a _coding attribute (CodingAgentTool instance)."""
+    assert hasattr(agent, "_coding")
+    assert agent._coding is not None
+
+
+def test_coding_ask_tool_routes_to_coding_agent(agent):
+    """coding_ask tool call should invoke the coding agent, not return 'not available'."""
+    coding_response = _tool_response("coding_ask", {"question": "How does routing work?", "cwd": "/some/project"})
+    stop = _stop_response("Routing uses a pre-flight classifier.")
+
+    responses = [coding_response, stop]
+    call_idx = [0]
+
+    def fake_post(url, json=None, **kwargs):
+        r = responses[call_idx[0]]
+        call_idx[0] += 1
+        return r
+
+    mock_coding = MagicMock()
+    mock_coding.ask.return_value = {"answer": "Routing uses a pre-flight classifier.", "error": None}
+    agent._coding = mock_coding
+
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", wraps=lambda name, args, *a, **kw: (
+            mock_coding.ask(args["question"], args["cwd"])["answer"]
+            if name == "coding_ask" else "ok"
+        )):
+            result = agent.run("How does routing work?", cwd="/some/project")
+
+    mock_coding.ask.assert_called_once()
+
+
+def test_coding_tools_in_ollama_schema():
+    """coding_ask, coding_plan, coding_review should be in OllamaAgent's tool schema."""
+    from ollama_agent import _OLLAMA_TOOLS
+    tool_names = [t["function"]["name"] for t in _OLLAMA_TOOLS]
+    assert "coding_ask" in tool_names
+    assert "coding_plan" in tool_names
+    assert "coding_review" in tool_names
+
+
+def test_coding_agent_passed_to_execute_tool(agent):
+    """execute_tool should be called with the coding agent instance."""
+    coding_response = _tool_response("coding_ask", {"question": "What is agent.py?", "cwd": "/p"})
+    stop = _stop_response("agent.py is the Claude agent.")
+    responses = [coding_response, stop]
+    call_idx = [0]
+
+    def fake_post(url, json=None, **kwargs):
+        r = responses[call_idx[0]]
+        call_idx[0] += 1
+        return r
+
+    captured = {}
+
+    def capturing_execute_tool(name, args, shell, web, code, macos, guardrails, **kwargs):
+        captured["coding"] = kwargs.get("coding")
+        return "agent.py is the Claude agent."
+
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", side_effect=capturing_execute_tool):
+            agent.run("What is agent.py?", cwd="/p")
+
+    assert captured.get("coding") is agent._coding

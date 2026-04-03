@@ -22,10 +22,10 @@ Rules for can_handle_locally:
 - false: task needs web search, current news/prices, advanced code generation, deep reasoning
 
 Rules for intent_class:
-- read_only: just reading or querying, no changes (list files, read a file, show status)
+- read_only: just reading or querying, no changes (list files, read a file, show git log, check dependencies, explain code, search a codebase)
 - prepare: will make changes the user should preview (generate code, draft text, move files)
 - destructive: deletes files, sends messages, modifies system settings, irreversible actions
-- complex_reasoning: needs web search, real-time data, or external information not available locally (news, prices, current events, remote APIs). Reading files, searching code, running shell commands, or analyzing local projects is NOT complex_reasoning."""
+- complex_reasoning: needs web search, real-time data, or external information NOT available on this machine (news, prices, current events, remote APIs, live documentation). Git history, local files, installed packages, running processes, and codebase questions are NOT complex_reasoning — they are read_only."""
 
 
 class Router:
