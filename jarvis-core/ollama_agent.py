@@ -103,7 +103,7 @@ class OllamaAgent:
         return float(self._config.get("ollama", {}).get("timeout_seconds", 30))
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
-            history: list | None = None) -> dict:
+            history: list | None = None, step_callback=None) -> dict:
         """Run Ollama tool-use loop. Raises EscalateToCloud if Ollama can't handle it.
         Returns same dict shape as Agent.run()."""
         system_msg = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~")) + _OLLAMA_EXTRA
@@ -151,8 +151,11 @@ class OllamaAgent:
                                          "content": f"error: malformed tool arguments — {e}. Please retry with valid JSON."})
                         continue
 
-                    step = {"tool": name, "input_summary": str(args)[:100], "result_summary": ""}
+                    step = {"tool": name, "input_summary": str(args)[:100], "result_summary": "", "milestone": len(steps) == 0}
                     steps.append(step)
+                    if step["milestone"] and step_callback is not None:
+                        from agent import _step_label
+                        step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": True})
                     try:
                         result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=cwd)
                         step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]

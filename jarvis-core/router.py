@@ -155,7 +155,7 @@ class Router:
 
             # Non-complex: use local OllamaAgent (qwen-executor); escalate to Sonnet on failure
             try:
-                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history)
+                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, step_callback=step_callback)
                 self._update_history(text, result)
                 return self._annotate(result, agent="ollama", model=self._ollama_model,
                                       escalated=False, escalation_reason=None,
