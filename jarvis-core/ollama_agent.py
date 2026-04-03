@@ -63,7 +63,29 @@ def _anthropic_to_ollama_tools(anthropic_tools: list) -> list:
 # Routing decisions are made by the pre-flight classifier in Router, not by tool calls.
 _DELEGATION_TOOLS = {"delegate_to_claude_code", "delegate_to_local"}
 _OLLAMA_SAFE_TOOL_DEFINITIONS = [t for t in TOOL_DEFINITIONS if t["name"] not in _DELEGATION_TOOLS]
-_OLLAMA_TOOLS = _anthropic_to_ollama_tools(_OLLAMA_SAFE_TOOL_DEFINITIONS)
+_FINALIZE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "finalize",
+        "description": (
+            "Call this when you have enough information to answer the user's request. "
+            "Use this instead of continuing to search or gather more data. "
+            "Pass your complete answer as the 'answer' parameter."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "type": "string",
+                    "description": "Your complete answer to the user's request.",
+                }
+            },
+            "required": ["answer"],
+        },
+    },
+}
+
+_OLLAMA_TOOLS = _anthropic_to_ollama_tools(_OLLAMA_SAFE_TOOL_DEFINITIONS) + [_FINALIZE_TOOL]
 
 
 class OllamaAgent:
@@ -124,21 +146,10 @@ class OllamaAgent:
         max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 10))
         stall_detection = self._config.get("reasoning", {}).get("stall_detection", True)
         last_tool_call = None  # (tool_name, args_key) for stall detection
-        force_finish = False
 
         try:
             for step_idx in range(max_steps):
-                # Past halfway and tools have been used — force a final text response
-                if not force_finish and step_idx >= max_steps // 2 and steps:
-                    force_finish = True
-                    messages.append({
-                        "role": "user",
-                        "content": "You have gathered enough information. Please give your final answer now based on what you have found so far.",
-                    })
-
                 payload = {"model": self._model, "messages": messages, "tools": _OLLAMA_TOOLS}
-                if force_finish:
-                    payload["tool_choice"] = "none"
 
                 resp = self._http_client.post(
                     f"{self._host}/v1/chat/completions",
@@ -168,6 +179,16 @@ class OllamaAgent:
                         messages.append({"role": "tool", "tool_call_id": call_id,
                                          "content": f"error: malformed tool arguments — {e}. Please retry with valid JSON."})
                         continue
+
+                    # finalize: model signals it has enough info — return immediately
+                    if name == "finalize":
+                        answer = args.get("answer", "") if isinstance(args, dict) else ""
+                        step = {"tool": "finalize", "input_summary": answer[:100],
+                                "result_summary": "finalized", "milestone": len(steps) == 0}
+                        steps.append(step)
+                        result = format_response(answer, tool_calls_made)
+                        result["steps"] = steps
+                        return result
 
                     # Stall detection: same tool + same args twice in a row → break
                     if stall_detection:

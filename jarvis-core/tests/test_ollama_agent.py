@@ -266,3 +266,70 @@ def test_salvage_falls_back_to_error_if_empty(agent):
             result = agent.run("do stuff")
 
     assert result["speak"] == "I ran out of steps. Please try again."
+
+
+# ── finalize tool ─────────────────────────────────────────────────────────────
+
+def test_finalize_tool_returns_immediately(agent):
+    """When model calls finalize, agent returns that answer without any further steps."""
+    finalize_response = {
+        "choices": [{"finish_reason": "tool_calls", "message": {
+            "content": None,
+            "tool_calls": [{"id": "c1", "function": {
+                "name": "finalize",
+                "arguments": '{"answer": "Your laptop has 64GB RAM and an M1 Max chip."}'
+            }}]
+        }}]
+    }
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = finalize_response
+
+    with patch.object(agent._http_client, "post", return_value=resp):
+        result = agent.run("what are my specs")
+
+    assert "64GB RAM" in result["speak"]
+    assert result["steps"][0]["tool"] == "finalize"
+
+
+def test_finalize_tool_stops_before_step_limit(agent):
+    """finalize on step 1 returns immediately without exhausting max_steps."""
+    call_count = [0]
+
+    def fake_post(url, json=None, **kwargs):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if call_count[0] == 1:
+            # First call: run a shell tool
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": "c1", "function": {
+                    "name": "shell_run", "arguments": '{"command": "uname -m"}'
+                }}]
+            }}]}
+        else:
+            # Second call: finalize
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": "c2", "function": {
+                    "name": "finalize", "arguments": '{"answer": "ARM architecture M1 Max."}'
+                }}]
+            }}]}
+        return resp
+
+    agent._config["reasoning"]["max_steps_ollama"] = 10
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="arm64"):
+            result = agent.run("what chip do I have")
+
+    assert "M1 Max" in result["speak"]
+    assert call_count[0] == 2  # only 2 API calls, not 10
+    assert len(result["steps"]) == 2
+
+
+def test_finalize_tool_is_in_ollama_tools_schema(agent):
+    """finalize tool should be present in the tools sent to Ollama."""
+    from ollama_agent import _OLLAMA_TOOLS
+    tool_names = [t["function"]["name"] for t in _OLLAMA_TOOLS]
+    assert "finalize" in tool_names

@@ -419,6 +419,7 @@ _STEP_LABELS: dict[str, str] = {
     "coding_ask": "Asking codebase",
     "coding_plan": "Planning edits",
     "coding_review": "Reviewing changes",
+    "finalize": "Done",
 }
 
 
