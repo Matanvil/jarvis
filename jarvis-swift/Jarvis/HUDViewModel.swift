@@ -26,6 +26,9 @@ class HUDViewModel: ObservableObject {
     /// Capped at 60% of screen height. AppDelegate observes this to resize the window.
     @Published var contentHeight: CGFloat = 120
 
+    /// Set to true to focus the text input field. Resets itself to false after focus is applied (one-shot).
+    @Published var focusTextInput: Bool = false
+
     /// Start time of the current session (first command's timestamp). Used for save filename.
     private(set) var sessionStart: Date = Date()
 
