@@ -121,7 +121,9 @@ def test_ask_returns_answer(tmp_path):
 
     assert result["answer"] == "The router classifies intent before execution."
     assert result["error"] is None
-    mock_loop.ask.assert_called_once_with("what does the router do?")
+    call_kwargs = mock_loop.ask.call_args
+    assert call_kwargs.args[0] == "what does the router do?"
+    assert "on_event" in call_kwargs.kwargs
 
 
 def test_ask_returns_error_on_exception(tmp_path):
