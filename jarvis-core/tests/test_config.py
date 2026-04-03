@@ -64,7 +64,7 @@ def test_defaults_include_reasoning_block(tmp_path, monkeypatch):
     monkeypatch.setattr("config.CONFIG_PATH", tmp_path / "config.json")
     cfg = config.load()
     assert cfg["reasoning"]["max_steps_claude"] == 10
-    assert cfg["reasoning"]["max_steps_ollama"] == 5
+    assert cfg["reasoning"]["max_steps_ollama"] == 10
     assert cfg["reasoning"]["max_total_steps"] == 20
     assert cfg["reasoning"]["stall_detection"] is True
 

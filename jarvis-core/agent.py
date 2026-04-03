@@ -40,9 +40,9 @@ Tool choice tips:
 - CRITICAL: For any question about files, logs, counts, or live system state — always verify with a tool (shell_run, file_read, list_dir, find_files). Never answer from memory or context alone. If you haven't checked, you don't know.
 
 Coding agent tools (prefer these over reading files manually for codebase work):
-- coding_ask: Use when the user asks a question about how the codebase works, where something is implemented, or how files/modules relate. Better than reading files one by one — it uses semantic search.
-- coding_plan: Use when the user asks you to plan, propose, or design a code change, refactor, reorganization, or new feature. Always prefer this over reasoning from a directory listing.
-- coding_review: Use when the user asks you to review recent changes, check what was modified, or audit a diff.
+- coding_ask: Use when the user asks a question about how the codebase works, where something is implemented, or how files/modules relate. Better than reading files one by one — it uses semantic search. Returns a complete answer — finalize immediately after, do not read more files.
+- coding_plan: Use when the user asks you to plan, propose, or design a code change, refactor, reorganization, or new feature. Always prefer this over reasoning from a directory listing. Returns a complete plan — finalize immediately after.
+- coding_review: Use when the user asks you to review recent changes, check what was modified, or audit a diff. Returns a complete review — finalize immediately after, do not run additional git commands or read files.
 
 macOS file tips:
 - Screenshots are named "Screenshot YYYY-MM-DD at HH.MM.SS.png" — use case-insensitive search: find ~/Desktop -iname "*screenshot*"
@@ -301,7 +301,8 @@ TOOL_DEFINITIONS = [
             "Ask a question about the codebase in the given directory. "
             "Uses semantic search over indexed code to answer questions about "
             "architecture, specific functions, data flow, or behavior. "
-            "Auto-indexes the codebase on first use."
+            "Auto-indexes the codebase on first use. "
+            "Returns a complete answer — call finalize immediately after, do NOT read additional files."
         ),
         "input_schema": {
             "type": "object",
@@ -318,7 +319,8 @@ TOOL_DEFINITIONS = [
             "Generate a multi-file edit plan to accomplish a coding task. "
             "Searches the codebase and produces a list of specific file edits "
             "(old_code → new_code) needed to complete the task. "
-            "Use this to plan refactors, new features, or bug fixes before applying them."
+            "Use this to plan refactors, new features, or bug fixes before applying them. "
+            "Returns a complete plan — call finalize immediately after."
         ),
         "input_schema": {
             "type": "object",
@@ -337,7 +339,8 @@ TOOL_DEFINITIONS = [
         "description": (
             "Review the uncommitted git changes in a project directory. "
             "Runs git diff HEAD, searches the codebase for context, and returns "
-            "categorized issues: critical, important, or suggestion."
+            "categorized issues: critical, important, or suggestion. "
+            "Returns a complete review — call finalize immediately after, do NOT read additional files or run git commands."
         ),
         "input_schema": {
             "type": "object",
