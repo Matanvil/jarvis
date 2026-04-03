@@ -18,6 +18,8 @@ CRITICAL RULES FOR THIS MODEL:
 - ALWAYS use the provided tool/function calls to take action. NEVER write tool calls as JSON text in your response.
 - If you need to run a command or write a file, call the tool — do not describe it in text.
 - NEVER claim to have performed an action without first calling the tool. No tool call = no action taken.
+- Be efficient: once you have enough information to answer, stop calling tools and respond. Do NOT keep gathering extra data beyond what the user asked for.
+- You have a limited number of tool calls. Use only what is needed — typically 1-3 calls. Do not explore tangents.
 """
 
 
@@ -61,7 +63,29 @@ def _anthropic_to_ollama_tools(anthropic_tools: list) -> list:
 # Routing decisions are made by the pre-flight classifier in Router, not by tool calls.
 _DELEGATION_TOOLS = {"delegate_to_claude_code", "delegate_to_local"}
 _OLLAMA_SAFE_TOOL_DEFINITIONS = [t for t in TOOL_DEFINITIONS if t["name"] not in _DELEGATION_TOOLS]
-_OLLAMA_TOOLS = _anthropic_to_ollama_tools(_OLLAMA_SAFE_TOOL_DEFINITIONS)
+_FINALIZE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "finalize",
+        "description": (
+            "Call this when you have enough information to answer the user's request. "
+            "Use this instead of continuing to search or gather more data. "
+            "Pass your complete answer as the 'answer' parameter."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "type": "string",
+                    "description": "Your complete answer to the user's request.",
+                }
+            },
+            "required": ["answer"],
+        },
+    },
+}
+
+_OLLAMA_TOOLS = _anthropic_to_ollama_tools(_OLLAMA_SAFE_TOOL_DEFINITIONS) + [_FINALIZE_TOOL]
 
 
 class OllamaAgent:
@@ -103,7 +127,8 @@ class OllamaAgent:
         return float(self._config.get("ollama", {}).get("timeout_seconds", 30))
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
-            history: list | None = None, step_callback=None) -> dict:
+            history: list | None = None, step_callback=None,
+            intent_class: str | None = None) -> dict:
         """Run Ollama tool-use loop. Raises EscalateToCloud if Ollama can't handle it.
         Returns same dict shape as Agent.run()."""
         system_msg = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~")) + _OLLAMA_EXTRA
@@ -119,12 +144,24 @@ class OllamaAgent:
         ]
         tool_calls_made = []
         steps = []
+        budgets = self._config.get("reasoning", {}).get("step_budgets", {})
+        if intent_class and intent_class in budgets:
+            max_steps = int(budgets[intent_class])
+        else:
+            max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 10))
+        stall_detection = self._config.get("reasoning", {}).get("stall_detection", True)
+        last_tool_call = None        # (tool_name, args_key) for exact stall detection
+        recent_tools: list = []      # sliding window of last 5 tool names for near-duplicate detection
+        _WINDOW = 5
+        _NEAR_DUP_THRESHOLD = 3     # same tool ≥ 3 times in window → redundant
 
         try:
-            for _ in range(10):
+            for step_idx in range(max_steps):
+                payload = {"model": self._model, "messages": messages, "tools": _OLLAMA_TOOLS}
+
                 resp = self._http_client.post(
                     f"{self._host}/v1/chat/completions",
-                    json={"model": self._model, "messages": messages, "tools": _OLLAMA_TOOLS},
+                    json=payload,
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -150,6 +187,62 @@ class OllamaAgent:
                         messages.append({"role": "tool", "tool_call_id": call_id,
                                          "content": f"error: malformed tool arguments — {e}. Please retry with valid JSON."})
                         continue
+
+                    # finalize: model signals it has enough info — return immediately
+                    if name == "finalize":
+                        answer = args.get("answer", "") if isinstance(args, dict) else ""
+                        step = {"tool": "finalize", "input_summary": answer[:100],
+                                "result_summary": "finalized", "milestone": len(steps) == 0}
+                        steps.append(step)
+                        result = format_response(answer, tool_calls_made)
+                        result["steps"] = steps
+                        return result
+
+                    # Near-duplicate detection: same tool dominates recent window → salvage
+                    recent_tools.append(name)
+                    if len(recent_tools) > _WINDOW:
+                        recent_tools.pop(0)
+                    if stall_detection and recent_tools.count(name) >= _NEAR_DUP_THRESHOLD and steps:
+                        messages.append({
+                            "role": "user",
+                            "content": f"You have called '{name}' {recent_tools.count(name)} times with similar inputs and similar results. Stop and respond with what you already know.",
+                        })
+                        try:
+                            nr = self._http_client.post(
+                                f"{self._host}/v1/chat/completions",
+                                json={"model": self._model, "messages": messages, "tool_choice": "none"},
+                            )
+                            nr.raise_for_status()
+                            nr_text = _clean_ollama_text(nr.json()["choices"][0]["message"].get("content") or "")
+                            if nr_text:
+                                result = format_response(nr_text, tool_calls_made)
+                                result["steps"] = steps
+                                return result
+                        except Exception:
+                            pass
+
+                    # Exact stall detection: same tool + same args twice in a row → break
+                    if stall_detection:
+                        try:
+                            current_call = (name, frozenset(args.items()) if isinstance(args, dict) else str(args))
+                        except TypeError:
+                            current_call = (name, str(args))
+                        if current_call == last_tool_call:
+                            messages.append({
+                                "role": "user",
+                                "content": "You already tried this exact action. Please try a different approach or conclude with what you know.",
+                            })
+                            # Force one more completion without tools to get a response
+                            resp2 = self._http_client.post(
+                                f"{self._host}/v1/chat/completions",
+                                json={"model": self._model, "messages": messages},
+                            )
+                            resp2.raise_for_status()
+                            text = _clean_ollama_text(resp2.json()["choices"][0]["message"].get("content") or "")
+                            result = format_response(text, tool_calls_made)
+                            result["steps"] = steps
+                            return result
+                        last_tool_call = current_call
 
                     step = {"tool": name, "input_summary": str(args)[:100], "result_summary": "", "milestone": len(steps) == 0}
                     steps.append(step)
@@ -181,6 +274,23 @@ class OllamaAgent:
             raise EscalateToCloud(f"Ollama timeout: {e}")
         except httpx.HTTPStatusError as e:
             raise EscalateToCloud(f"Ollama HTTP error: {e}")
+
+        # Salvage: one final no-tools call to emit whatever the model gathered
+        try:
+            salvage_resp = self._http_client.post(
+                f"{self._host}/v1/chat/completions",
+                json={"model": self._model, "messages": messages, "tool_choice": "none"},
+            )
+            salvage_resp.raise_for_status()
+            salvage_text = _clean_ollama_text(
+                salvage_resp.json()["choices"][0]["message"].get("content") or ""
+            )
+            if salvage_text:
+                result = format_response(salvage_text, tool_calls_made)
+                result["steps"] = steps
+                return result
+        except Exception:
+            pass
 
         result = format_response("I ran out of steps. Please try again.", tool_calls_made)
         result["steps"] = steps

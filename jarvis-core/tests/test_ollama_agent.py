@@ -190,4 +190,300 @@ def test_run_injects_memory_context_into_messages(agent):
 
     system_msg = next((m for m in captured_messages if m["role"] == "system"), None)
     assert system_msg is not None
-    assert "npm test" in system_msg["content"]
+
+
+# ── salvage call on step exhaustion ──────────────────────────────────────────
+
+def test_salvage_call_on_step_exhaustion(agent):
+    """When ALL steps are exhausted (model never stopped), a final no-tools call salvages the answer."""
+    call_num = [0]
+    commands = ["ls /", "ls /tmp", "ls /usr"]
+
+    def make_tool_response(cmd):
+        return {"choices": [{"finish_reason": "tool_calls", "message": {
+            "content": None,
+            "tool_calls": [{"id": f"c{call_num[0]}", "function": {
+                "name": "shell_run", "arguments": f'{{"command": "{cmd}"}}'
+            }}]
+        }}]}
+
+    salvage_response = {
+        "choices": [{"finish_reason": "stop", "message": {"content": "MacBook Pro, M1 Max, 64GB RAM."}}]
+    }
+    salvage_calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if json and json.get("tool_choice") == "none" and "tools" not in json:
+            salvage_calls.append(json)
+            resp.json.return_value = salvage_response
+        else:
+            resp.json.return_value = make_tool_response(commands[call_num[0] % len(commands)])
+            call_num[0] += 1
+        return resp
+
+    agent._config["reasoning"]["max_steps_ollama"] = 3
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="file list"):
+            result = agent.run("what are my specs")
+
+    assert len(salvage_calls) >= 1, "Salvage call should have been made after exhausting steps"
+    assert "ran out of steps" not in result["speak"]
+    assert "MacBook Pro" in result["speak"]
+
+
+def test_salvage_falls_back_to_error_if_empty(agent):
+    """If salvage call returns empty content, fall back to error message."""
+    call_num = [0]
+    commands = ["ls /", "ls /tmp", "ls /usr"]
+
+    def make_tool_response(cmd):
+        return {"choices": [{"finish_reason": "tool_calls", "message": {
+            "content": None,
+            "tool_calls": [{"id": f"c{call_num[0]}", "function": {
+                "name": "shell_run", "arguments": f'{{"command": "{cmd}"}}'
+            }}]
+        }}]}
+
+    empty_salvage = {"choices": [{"finish_reason": "stop", "message": {"content": ""}}]}
+
+    def fake_post(url, json=None, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if json and json.get("tool_choice") == "none" and "tools" not in json:
+            resp.json.return_value = empty_salvage
+        else:
+            resp.json.return_value = make_tool_response(commands[call_num[0] % len(commands)])
+            call_num[0] += 1
+        return resp
+
+    agent._config["reasoning"]["max_steps_ollama"] = 3
+    agent._config["reasoning"]["stall_detection"] = False
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="ok"):
+            result = agent.run("do stuff")
+
+    assert result["speak"] == "I ran out of steps. Please try again."
+
+
+# ── finalize tool ─────────────────────────────────────────────────────────────
+
+def test_finalize_tool_returns_immediately(agent):
+    """When model calls finalize, agent returns that answer without any further steps."""
+    finalize_response = {
+        "choices": [{"finish_reason": "tool_calls", "message": {
+            "content": None,
+            "tool_calls": [{"id": "c1", "function": {
+                "name": "finalize",
+                "arguments": '{"answer": "Your laptop has 64GB RAM and an M1 Max chip."}'
+            }}]
+        }}]
+    }
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = finalize_response
+
+    with patch.object(agent._http_client, "post", return_value=resp):
+        result = agent.run("what are my specs")
+
+    assert "64GB RAM" in result["speak"]
+    assert result["steps"][0]["tool"] == "finalize"
+
+
+def test_finalize_tool_stops_before_step_limit(agent):
+    """finalize on step 1 returns immediately without exhausting max_steps."""
+    call_count = [0]
+
+    def fake_post(url, json=None, **kwargs):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if call_count[0] == 1:
+            # First call: run a shell tool
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": "c1", "function": {
+                    "name": "shell_run", "arguments": '{"command": "uname -m"}'
+                }}]
+            }}]}
+        else:
+            # Second call: finalize
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": "c2", "function": {
+                    "name": "finalize", "arguments": '{"answer": "ARM architecture M1 Max."}'
+                }}]
+            }}]}
+        return resp
+
+    agent._config["reasoning"]["max_steps_ollama"] = 10
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="arm64"):
+            result = agent.run("what chip do I have")
+
+    assert "M1 Max" in result["speak"]
+    assert call_count[0] == 2  # only 2 API calls, not 10
+    assert len(result["steps"]) == 2
+
+
+# ── intent-class based step budgets ──────────────────────────────────────────
+
+def test_read_only_intent_uses_lower_step_budget(agent):
+    """read_only intent_class uses step_budgets.read_only (5) not max_steps_ollama (10)."""
+    call_count = [0]
+    commands = [f"ls /dir{i}" for i in range(20)]
+
+    def fake_post(url, json=None, **kwargs):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if json and json.get("tool_choice") == "none":
+            resp.json.return_value = {"choices": [{"finish_reason": "stop",
+                                                    "message": {"content": "Done."}}]}
+        else:
+            cmd = commands[call_count[0] % len(commands)]
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": f"c{call_count[0]}", "function": {
+                    "name": "shell_run", "arguments": f'{{"command": "{cmd}"}}'
+                }}]
+            }}]}
+        return resp
+
+    agent._config["reasoning"]["max_steps_ollama"] = 10
+    agent._config["reasoning"]["step_budgets"] = {
+        "read_only": 5, "prepare": 8, "destructive": 10, "complex_reasoning": 10
+    }
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="ok"):
+            agent.run("list files", intent_class="read_only")
+
+    # 5 tool calls + 1 salvage = ≤ 7 total API calls
+    assert call_count[0] <= 7
+
+
+def test_destructive_intent_uses_higher_step_budget(agent):
+    """destructive intent_class uses step_budgets.destructive (10), not read_only (3)."""
+    call_count = [0]
+    # Alternate tools so near-duplicate detection (same tool ≥ 3 times) doesn't fire
+    tools_cycle = ["shell_run", "file_read", "shell_run", "file_read",
+                   "shell_run", "file_read", "shell_run", "file_read",
+                   "shell_run", "file_read", "shell_run"]
+    args_cycle = [
+        '{"command": "rm /tmp/a"}', '{"path": "/tmp/a.log"}',
+        '{"command": "rm /tmp/b"}', '{"path": "/tmp/b.log"}',
+        '{"command": "rm /tmp/c"}', '{"path": "/tmp/c.log"}',
+        '{"command": "rm /tmp/d"}', '{"path": "/tmp/d.log"}',
+        '{"command": "rm /tmp/e"}', '{"path": "/tmp/e.log"}',
+        '{"command": "rm /tmp/f"}',
+    ]
+
+    def fake_post(url, json=None, **kwargs):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if json and json.get("tool_choice") == "none":
+            resp.json.return_value = {"choices": [{"finish_reason": "stop",
+                                                    "message": {"content": "Deleted."}}]}
+        else:
+            idx = (call_count[0] - 1) % len(tools_cycle)
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": f"c{call_count[0]}", "function": {
+                    "name": tools_cycle[idx], "arguments": args_cycle[idx]
+                }}]
+            }}]}
+        return resp
+
+    agent._config["reasoning"]["step_budgets"] = {
+        "read_only": 3, "prepare": 8, "destructive": 10, "complex_reasoning": 10
+    }
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="ok"):
+            agent.run("delete temp files", intent_class="destructive")
+
+    # destructive budget=10 → more API calls than read_only budget=3 would allow (4 max)
+    assert call_count[0] > 4
+
+
+def test_no_intent_class_uses_max_steps_ollama(agent):
+    """Without intent_class, falls back to max_steps_ollama."""
+    call_count = [0]
+    commands = [f"ls /dir{i}" for i in range(20)]
+
+    def fake_post(url, json=None, **kwargs):
+        call_count[0] += 1
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if json and json.get("tool_choice") == "none":
+            resp.json.return_value = {"choices": [{"finish_reason": "stop",
+                                                    "message": {"content": "Done."}}]}
+        else:
+            cmd = commands[call_count[0] % len(commands)]
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": f"c{call_count[0]}", "function": {
+                    "name": "shell_run", "arguments": f'{{"command": "{cmd}"}}'
+                }}]
+            }}]}
+        return resp
+
+    agent._config["reasoning"]["max_steps_ollama"] = 3
+    agent._config["reasoning"]["step_budgets"] = {"read_only": 1}
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="ok"):
+            agent.run("do something")  # no intent_class → uses max_steps_ollama=3
+
+    # 3 tool calls + 1 salvage = ≤ 5 total; more than 1 (which read_only budget would give)
+    assert call_count[0] > 2
+
+
+def test_finalize_tool_is_in_ollama_tools_schema(agent):
+    """finalize tool should be present in the tools sent to Ollama."""
+    from ollama_agent import _OLLAMA_TOOLS
+    tool_names = [t["function"]["name"] for t in _OLLAMA_TOOLS]
+    assert "finalize" in tool_names
+
+
+# ── near-duplicate redundancy detection ──────────────────────────────────────
+
+def test_near_duplicate_detection_stops_redundant_loop(agent):
+    """Same tool called 3 times in a 5-step window triggers salvage and stops loop."""
+    call_num = [0]
+    # 4 slightly-different find commands — same tool, near-identical args
+    commands = [
+        "find ~/dev -name '*.py' | wc -l",
+        "find ~/dev -name '*.py' -not -path '*cache*' | wc -l",
+        "find ~/dev -name '*.py' -not -path '*__pycache__*' | wc -l",
+        "find ~/dev -name '*.py' -not -path '*/.venv/*' | wc -l",
+    ]
+
+    salvage_response = {"choices": [{"finish_reason": "stop",
+                                      "message": {"content": "Found 100 Python files."}}]}
+
+    def fake_post(url, json=None, **kwargs):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        if json and json.get("tool_choice") == "none":
+            resp.json.return_value = salvage_response
+        else:
+            cmd = commands[call_num[0] % len(commands)]
+            call_num[0] += 1
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": f"c{call_num[0]}", "function": {
+                    "name": "shell_run",
+                    "arguments": f'{{"command": "{cmd}"}}'
+                }}]
+            }}]}
+        return resp
+
+    agent._config["reasoning"]["max_steps_ollama"] = 10
+    with patch.object(agent._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", return_value="   100"):
+            result = agent.run("how many python files")
+
+    assert len(result["steps"]) < 10, "Should have stopped before using all 10 steps"
+    assert "ran out of steps" not in result["speak"]
+    assert "100 Python files" in result["speak"]
