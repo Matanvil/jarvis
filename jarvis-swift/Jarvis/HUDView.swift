@@ -18,12 +18,24 @@ struct HUDView: View {
     var onExpand:   () -> Void = {}
     var onApprove:  () -> Void = {}
     var onDeny:     () -> Void = {}
+    var onTextCommand: (String) -> Void = { _ in }
+
+    @State private var inputText   = ""
+    @State private var cursorVisible = false
+    @FocusState private var inputFocused: Bool
 
     @State private var isHovered = false
 
     private var maxThreadHeight: CGFloat {
         (NSScreen.main?.visibleFrame.height ?? 900) * 0.6 - 36 - 16
         // 36 = status bar, 16 = top/bottom padding
+    }
+
+    private var isInputDisabled: Bool {
+        switch viewModel.state {
+        case .listening, .thinking, .executing: return true
+        default: return false
+        }
     }
 
     var body: some View {
@@ -36,6 +48,7 @@ struct HUDView: View {
                     VStack(spacing: 0) {
                         threadView
                         statusBar
+                        inputRow
                     }
                     .frame(maxWidth: .infinity)
                     .background(
@@ -77,7 +90,17 @@ struct HUDView: View {
     @ViewBuilder
     private var threadView: some View {
         if viewModel.turns.isEmpty {
-            EmptyView()
+            Text("⌃⌥ for voice  ·  type below for text")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.14))
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ThreadHeightKey.self, value: geo.size.height)
+                    }
+                )
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -109,7 +132,7 @@ struct HUDView: View {
             }
             .onPreferenceChange(ThreadHeightKey.self) { height in
                 let cap = (NSScreen.main?.visibleFrame.height ?? 900) * 0.6
-                let newHeight = min(height + 36 + 16, cap)   // thread + status bar + padding
+                let newHeight = min(height + 36 + 36 + 16, cap)   // thread + status bar + input row + padding
                 // PreferenceKey callbacks may arrive off-main; guard before writing @Published.
                 DispatchQueue.main.async {
                     viewModel.contentHeight = max(newHeight, 120)
@@ -163,9 +186,15 @@ struct HUDView: View {
             }
 
         case .response:
-            Label("Done", systemImage: "checkmark")
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.4))
+            if viewModel.turns.isEmpty {
+                Text("⌃⌥ voice  ·  ↵ send")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.18))
+            } else {
+                Label("Done", systemImage: "checkmark")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
 
         case .approval(let description):
             HStack(spacing: 10) {
@@ -192,6 +221,80 @@ struct HUDView: View {
             Label("Denied", systemImage: "xmark.circle.fill")
                 .font(.system(size: 12))
                 .foregroundStyle(.red.opacity(0.8))
+        }
+    }
+
+    // MARK: - Text input
+
+    @ViewBuilder
+    private var inputRow: some View {
+        HStack(spacing: 6) {
+            Text("▶")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(
+                    Color(red: 0.33, green: 0.67, blue: 1.0)
+                        .opacity(isInputDisabled ? 0.25 : 0.65)
+                )
+
+            ZStack(alignment: .leading) {
+                if inputText.isEmpty && !inputFocused {
+                    Text("ask me anything…")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.20))
+                        .italic()
+                        .allowsHitTesting(false)
+                }
+
+                // Block cursor at leading edge — shown when focused and no text yet
+                if inputFocused && inputText.isEmpty {
+                    Rectangle()
+                        .frame(width: 7, height: 13)
+                        .clipShape(RoundedRectangle(cornerRadius: 1))
+                        .foregroundStyle(.white.opacity(cursorVisible ? 0.75 : 0))
+                        .allowsHitTesting(false)
+                }
+
+                TextField("", text: $inputText)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .textFieldStyle(.plain)
+                    .focused($inputFocused)
+                    .disabled(isInputDisabled)
+                    .onSubmit {
+                        let trimmed = inputText.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { return }
+                        inputText = ""
+                        onTextCommand(trimmed)
+                    }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 11)
+        .background(Color.black.opacity(0.12))
+        .overlay(alignment: .top) {
+            Color.white.opacity(0.06).frame(height: 1)
+        }
+        // Blink cursor while focused
+        .task(id: inputFocused) {
+            guard inputFocused else { cursorVisible = false; return }
+            cursorVisible = true
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .milliseconds(530))
+                } catch {
+                    break
+                }
+                cursorVisible.toggle()
+            }
+            cursorVisible = false
+        }
+        // One-shot focus trigger from ViewModel
+        .onChange(of: viewModel.focusTextInput) { newValue in
+            if newValue {
+                inputFocused = true
+                DispatchQueue.main.async { viewModel.focusTextInput = false }
+            }
         }
     }
 }

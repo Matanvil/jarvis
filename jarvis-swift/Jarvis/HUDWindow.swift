@@ -179,6 +179,17 @@ class HUDWindow: NSPanel {
         }
         super.mouseUp(with: event)   // Issue #8: maintain responder chain
     }
+
+    // Allow the panel to become key so text input receives keyboard events.
+    // Without this, .nonactivatingPanel prevents keyboard focus entirely.
+    override var canBecomeKey: Bool { true }
+
+    // Steal key status on click when expanded so the text field can receive input.
+    // This is intentional — clicking the HUD implies intent to interact with it.
+    override func mouseDown(with event: NSEvent) {
+        if !isMinimized { makeKey() }
+        super.mouseDown(with: event)
+    }
 }
 
 // MARK: - NSWindowDelegate

@@ -187,12 +187,15 @@ def _make_plan_mock():
 
 
 def test_plan_returns_edits(tmp_path):
-    """plan() calls Planner.plan and returns formatted edits."""
+    """plan() calls Planner.plan, saves the plan, and returns formatted edits."""
+    import os
     cwd = str(tmp_path)
+    repo_name = os.path.basename(cwd.rstrip("/"))
     with patch("tools.coding_agent.ClaudeClient"), \
          patch("tools.coding_agent.OllamaEmbedder"), \
          patch("tools.coding_agent.VectorStore") as MockStore, \
          patch("tools.coding_agent.index_repo"), \
+         patch("tools.coding_agent.save_plan") as mock_save_plan, \
          patch("tools.coding_agent.Planner") as MockPlanner:
         mock_store = MagicMock()
         mock_store.count.return_value = 5
@@ -201,6 +204,7 @@ def test_plan_returns_edits(tmp_path):
         mock_planner = MagicMock()
         mock_planner.plan.return_value = _make_plan_mock()
         MockPlanner.return_value = mock_planner
+        mock_save_plan.return_value = "/tmp/fake-plan.json"
 
         tool = make_tool()
         result = tool.plan("extract auth into a service", cwd)
@@ -210,7 +214,9 @@ def test_plan_returns_edits(tmp_path):
     assert result["edits"][0]["file"] == "auth/service.py"
     assert result["edits"][0]["old_code"] == "def authenticate(user):\n    pass"
     assert "plan_summary" in result
-    mock_planner.plan.assert_called_once_with("extract auth into a service", cwd)
+    assert result["plan_path"] == "/tmp/fake-plan.json"
+    mock_planner.plan.assert_called_once_with("extract auth into a service", repo=repo_name)
+    mock_save_plan.assert_called_once()
 
 
 def test_plan_returns_error_on_planner_error(tmp_path):
