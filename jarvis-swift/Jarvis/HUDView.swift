@@ -279,16 +279,21 @@ struct HUDView: View {
         .task(id: inputFocused) {
             guard inputFocused else { cursorVisible = false; return }
             cursorVisible = true
-            while true {
-                try? await Task.sleep(for: .milliseconds(530))
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .milliseconds(530))
+                } catch {
+                    break
+                }
                 cursorVisible.toggle()
             }
+            cursorVisible = false
         }
         // One-shot focus trigger from ViewModel
         .onChange(of: viewModel.focusTextInput) { newValue in
             if newValue {
                 inputFocused = true
-                viewModel.focusTextInput = false
+                DispatchQueue.main.async { viewModel.focusTextInput = false }
             }
         }
     }
