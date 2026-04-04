@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 from src.agent_loop import AgentLoop
 from src.planner import Planner, PlannerError
 from src.reviewer import Reviewer, ReviewerError
+from src.plan_store import save_plan
 from src.indexer import index_repo
 from src.llm import ClaudeClient
 from src.ollama_client import OllamaClient
@@ -20,6 +21,7 @@ from src.store import VectorStore
 
 
 _CHROMA_PATH = os.path.expanduser("~/.jarvis/coding-agent-chroma")
+_PLANS_DIR = os.path.expanduser("~/.jarvis/coding-agent-plans")
 
 
 class CodingAgentTool:
@@ -76,13 +78,15 @@ class CodingAgentTool:
             return {"answer": None, "error": str(e)}
 
     def plan(self, task: str, cwd: str) -> dict:
-        # Planner calls llm.client.messages.create() directly — always uses Claude (not local model)
         llm_model = getattr(self._llm, "model", "unknown")
-        _log.info("coding_plan starting — model=%s (direct API, local model bypassed) cwd=%s", llm_model, cwd)
+        _log.info("coding_plan starting — model=%s cwd=%s", llm_model, cwd)
         try:
             store = self._ensure_indexed(cwd)
+            repo_name = os.path.basename(cwd.rstrip("/"))
             planner = Planner(self._llm, self._embedder, store, repo_root=cwd)
-            result = planner.plan(task, cwd)
+            result = planner.plan(task, repo=repo_name)
+            plan_path = save_plan(result, _PLANS_DIR)
+            _log.info("coding_plan saved — path=%s edits=%d", plan_path, len(result.edits))
             edits = [
                 {
                     "file": e.file,
@@ -95,7 +99,7 @@ class CodingAgentTool:
             summary_lines = [f"Plan: {task}", ""]
             for e in result.edits:
                 summary_lines.append(f"• {e.file}: {e.description}")
-            return {"plan_summary": "\n".join(summary_lines), "edits": edits, "error": None}
+            return {"plan_summary": "\n".join(summary_lines), "edits": edits, "plan_path": str(plan_path), "error": None}
         except PlannerError as e:
             _log.error("coding_plan failed — %s", e)
             return {"plan_summary": None, "edits": None, "error": str(e)}
@@ -104,9 +108,8 @@ class CodingAgentTool:
             return {"plan_summary": None, "edits": None, "error": str(e)}
 
     def review(self, cwd: str, context: str = "") -> dict:
-        # Reviewer calls llm.client.messages.create() directly — always uses Claude (not local model)
         llm_model = getattr(self._llm, "model", "unknown")
-        _log.info("coding_review starting — model=%s (direct API, local model bypassed) cwd=%s", llm_model, cwd)
+        _log.info("coding_review starting — model=%s cwd=%s", llm_model, cwd)
         try:
             proc = subprocess.run(
                 ["git", "diff", "HEAD"],
