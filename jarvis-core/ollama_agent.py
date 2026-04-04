@@ -20,6 +20,8 @@ CRITICAL RULES FOR THIS MODEL:
 - NEVER claim to have performed an action without first calling the tool. No tool call = no action taken.
 - Be efficient: once you have enough information to answer, stop calling tools and respond. Do NOT keep gathering extra data beyond what the user asked for.
 - You have a limited number of tool calls. Use only what is needed — typically 1-3 calls. Do not explore tangents.
+- CODING TOOLS RULE: After calling coding_ask, coding_plan, or coding_review — call finalize IMMEDIATELY. These tools return complete answers. Do NOT call shell_run, file_read, list_dir, find_files, or any other tool after them. One coding tool call → finalize. That is the entire sequence.
+- NEVER call mkdir, file_write, or any filesystem-modifying command unless the user explicitly asked you to create or write something. Answering a question does not require creating directories or files.
 """
 
 
