@@ -31,6 +31,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     private var pendingApprovalCategory: String?
     private var lastCommandText: String?
     private var stepVoiceEnabled: Bool = false
+    private var lastInputWasText = false
 
     // MARK: - Init
 
@@ -200,6 +201,12 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             return
         }
 
+        lastInputWasText = false
+        sendCommand(text: text)
+    }
+
+    func submitTextCommand(text: String) {
+        lastInputWasText = true
         sendCommand(text: text)
     }
 
@@ -234,7 +241,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             let displayText = response.text.isEmpty ? fallback : response.text
             let speakText = response.speak ?? (response.text.isEmpty ? fallback : response.text)
             showHUD(.response(text: displayText))
-            speak(speakText)
+            if !lastInputWasText { speak(speakText) }
         }
     }
 
