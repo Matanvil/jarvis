@@ -245,32 +245,32 @@ struct HUDView: View {
                         .allowsHitTesting(false)
                 }
 
-                HStack(spacing: 2) {
-                    TextField("", text: $inputText)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .textFieldStyle(.plain)
-                        .focused($inputFocused)
-                        .disabled(isInputDisabled)
-                        .onSubmit {
-                            let trimmed = inputText.trimmingCharacters(in: .whitespaces)
-                            guard !trimmed.isEmpty else { return }
-                            inputText = ""
-                            onTextCommand(trimmed)
-                        }
-
-                    if inputFocused && inputText.isEmpty {
-                        Rectangle()
-                            .frame(width: 7, height: 13)
-                            .cornerRadius(1)
-                            .foregroundStyle(.white.opacity(cursorVisible ? 0.75 : 0))
-                    }
+                // Block cursor at leading edge — shown when focused and no text yet
+                if inputFocused && inputText.isEmpty {
+                    Rectangle()
+                        .frame(width: 7, height: 13)
+                        .clipShape(RoundedRectangle(cornerRadius: 1))
+                        .foregroundStyle(.white.opacity(cursorVisible ? 0.75 : 0))
+                        .allowsHitTesting(false)
                 }
+
+                TextField("", text: $inputText)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .textFieldStyle(.plain)
+                    .focused($inputFocused)
+                    .disabled(isInputDisabled)
+                    .onSubmit {
+                        let trimmed = inputText.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty else { return }
+                        inputText = ""
+                        onTextCommand(trimmed)
+                    }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 11)
         .background(Color.black.opacity(0.12))
         .overlay(alignment: .top) {
             Color.white.opacity(0.06).frame(height: 1)

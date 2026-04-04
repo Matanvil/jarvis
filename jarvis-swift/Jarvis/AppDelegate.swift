@@ -447,7 +447,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                 // No prior conversation — open HUD with text input focused.
                 self.hudViewModel.state = .response(text: "")
                 self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
-                self.hudWindow?.orderFront(nil)
+                self.hudWindow?.makeKeyAndOrderFront(nil)
                 self.hudViewModel.focusTextInput = true
                 return
             }
