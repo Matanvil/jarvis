@@ -274,6 +274,8 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
 
             if shouldReissue, let text = originalCommand {
                 // Re-issue the original command — guardrails now trust the category for this session.
+                // lastInputWasText is intentionally inherited from the original command: a text-initiated
+                // command that triggers approval will re-issue silently (no TTS), a voice command will speak.
                 // Create a fresh turn for the re-issued command.
                 await MainActor.run { self.viewModel.startTurn(command: text) }
                 do {
