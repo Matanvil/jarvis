@@ -443,9 +443,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     func expandHUD() {
         DispatchQueue.main.async {
-            // No-op when idle (nothing to restore). The reactor is the idle/standby state;
-            // the user activates Jarvis via hotkey or wake word, not by tapping the reactor.
-            guard self.lastVisibleState != .hidden else { return }
+            guard self.lastVisibleState != .hidden else {
+                // No prior conversation — open HUD with text input focused.
+                self.hudViewModel.state = .response(text: "")
+                self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
+                self.hudWindow?.orderFront(nil)
+                self.hudViewModel.focusTextInput = true
+                return
+            }
             self.hudViewModel.state = self.lastVisibleState
             self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
             self.hudWindow?.orderFront(nil)
@@ -455,11 +460,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private func setupHUD() {
         let view = HUDView(
             viewModel: hudViewModel,
-            onDismiss:  { [weak self] in self?.hideHUD() },
-            onMinimize: { [weak self] in self?.minimizeHUD() },
-            onExpand:   { [weak self] in self?.expandHUD() },
-            onApprove:  { [weak self] in self?.handleApprove() },
-            onDeny:     { [weak self] in self?.handleDeny() }
+            onDismiss:     { [weak self] in self?.hideHUD() },
+            onMinimize:    { [weak self] in self?.minimizeHUD() },
+            onExpand:      { [weak self] in self?.expandHUD() },
+            onApprove:     { [weak self] in self?.handleApprove() },
+            onDeny:        { [weak self] in self?.handleDeny() },
+            onTextCommand: { [weak self] text in Task { @MainActor in self?.audioController.submitTextCommand(text: text) } }
         )
         let window = HUDWindow(viewModel: hudViewModel)
         let hostingView = TransparentHostingView(rootView: view)
