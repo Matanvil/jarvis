@@ -30,6 +30,28 @@ def test_init_creates_components():
     )
 
 
+def test_init_sets_force_local_when_routing_mode_is_ollama_only():
+    """CodingAgentTool sets force_local=True on HybridClient when routing_mode is ollama_only."""
+    config = {**CONFIG, "local_model": "qwen3-coder:30b", "ollama": {**CONFIG["ollama"], "routing_mode": "ollama_only"}}
+    with patch("tools.coding_agent.ClaudeClient"), \
+         patch("tools.coding_agent.OllamaClient"), \
+         patch("tools.coding_agent.HybridClient") as MockHybrid, \
+         patch("tools.coding_agent.OllamaEmbedder"):
+        tool = CodingAgentTool(config)
+    assert MockHybrid.return_value.force_local is True
+
+
+def test_init_does_not_set_force_local_when_routing_mode_is_local_first():
+    """CodingAgentTool leaves force_local=False when routing_mode is local_first."""
+    config = {**CONFIG, "local_model": "qwen3-coder:30b", "ollama": {**CONFIG["ollama"], "routing_mode": "local_first"}}
+    with patch("tools.coding_agent.ClaudeClient"), \
+         patch("tools.coding_agent.OllamaClient"), \
+         patch("tools.coding_agent.HybridClient") as MockHybrid, \
+         patch("tools.coding_agent.OllamaEmbedder"):
+        tool = CodingAgentTool(config)
+    assert MockHybrid.return_value.force_local is not True
+
+
 def test_init_uses_hybrid_client_when_local_model_set():
     """CodingAgentTool uses HybridClient(OllamaClient, ClaudeClient) when local_model is set."""
     config = {**CONFIG, "local_model": "qwen3-coder:30b"}

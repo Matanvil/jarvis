@@ -251,7 +251,7 @@ def test_haiku_first_uses_sonnet_for_complex_reasoning(haiku_router, mock_haiku_
 
 
 def test_haiku_first_is_default_routing_mode(config):
-    assert config["ollama"]["routing_mode"] == "haiku_first"
+    assert config["ollama"]["routing_mode"] == "local_first"
 
 
 def test_haiku_first_classifier_failure_falls_back_to_haiku(haiku_router, mock_haiku_agent, mock_sonnet_agent):
@@ -353,6 +353,30 @@ def test_classifier_uses_classifier_model(config):
     r = Router(config=config, guardrails=guardrails)
     assert r._classifier_model == "jarvis-classifier"
     assert r._ollama_model == "qwen-executor"
+
+
+def test_default_routing_mode_is_local_first():
+    """Default routing mode should be local_first."""
+    from config import DEFAULTS
+    assert DEFAULTS["ollama"]["routing_mode"] == "local_first"
+
+
+def test_default_executor_model_is_qwen35_opus_jarvis():
+    """Default ollama executor model should be qwen35-opus-jarvis."""
+    from config import DEFAULTS
+    assert DEFAULTS["ollama"]["model"] == "qwen35-opus-jarvis"
+
+
+def test_classifier_model_in_defaults():
+    """classifier_model should be present in DEFAULTS and point to jarvis-classifier."""
+    from config import DEFAULTS
+    assert DEFAULTS["ollama"]["classifier_model"] == "jarvis-classifier"
+
+
+def test_local_first_annotates_result_with_executor_model_name(local_first_router, mock_ollama_agent):
+    """_model in result should reflect the ollama.model (executor), not classifier_model."""
+    result = local_first_router.process("list my files")
+    assert result["_model"] == "qwen-executor"  # matches what local_first_router fixture sets
 
 
 # ── history tool summary ──────────────────────────────────────────────────────

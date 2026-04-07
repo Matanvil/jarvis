@@ -27,7 +27,7 @@ _CLAUDE_CODE_TIMEOUT = 300
 
 TOOL_TO_GUARDRAIL_CATEGORY = {
     "shell_run": "run_shell",
-    "file_write": "edit_files",
+    "file_write": "create_files",
     "file_edit": "edit_files",
     "file_read": "read_files",
     "find_files": "read_files",

@@ -196,14 +196,15 @@ class Router:
         escalation_reason = None
         if mode == "ollama_only" or can_handle_locally:
             try:
-                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, intent_class=intent_class)
+                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, step_callback=step_callback, intent_class=intent_class)
                 self._update_history(text, result)
                 return self._annotate(result, agent="ollama", model=self._ollama_model,
                                       escalated=False, escalation_reason=None,
                                       intent_class=intent_class, start=start)
             except EscalateToCloud as e:
                 if mode == "ollama_only":
-                    result = {"speak": "Offline mode — cannot escalate.", "display": "Offline mode — cannot escalate.", "steps": []}
+                    msg = f"Local model unavailable: {e.reason}"
+                    result = {"speak": msg, "display": msg, "steps": []}
                     return self._annotate(result, agent="ollama", model=self._ollama_model,
                                           escalated=True, escalation_reason=f"suppressed:ollama_only:{e.reason}",
                                           intent_class=intent_class, start=start)

@@ -28,8 +28,9 @@ DEFAULTS = {
     },
     "ollama": {
         "host": "http://localhost:11434",
-        "model": "llama3.1:8b",
-        "routing_mode": "haiku_first",   # haiku_first | ollama_first | claude_only | ollama_only
+        "model": "qwen35-opus-jarvis",
+        "classifier_model": "jarvis-classifier",
+        "routing_mode": "local_first",   # local_first | haiku_first | ollama_first | claude_only | ollama_only
         "timeout_seconds": 30,
     },
     "reasoning": {
