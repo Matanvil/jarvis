@@ -103,7 +103,9 @@ class OllamaAgent:
         # Shared client reuses TCP connection to the persistent Ollama process.
         # Note: if timeout is updated via POST /config after construction, the
         # existing client will not pick up the new value — acceptable for now.
-        self._http_client = httpx.Client(timeout=self._timeout)
+        self._http_client = httpx.Client(
+            timeout=httpx.Timeout(connect=5.0, read=self._timeout, write=30.0, pool=5.0)
+        )
 
     def close(self) -> None:
         self._http_client.close()

@@ -87,7 +87,7 @@ class Router:
     def _classify(self, text: str) -> dict:
         """Ask Ollama to classify intent. Returns classification dict.
         Raises on any error — caller handles gracefully."""
-        with httpx.Client(timeout=self._ollama_timeout) as client:
+        with httpx.Client(timeout=httpx.Timeout(connect=5.0, read=self._ollama_timeout, write=30.0, pool=5.0)) as client:
             resp = client.post(
                 f"{self._ollama_host}/v1/chat/completions",
                 json={

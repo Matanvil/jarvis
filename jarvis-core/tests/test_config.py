@@ -46,7 +46,7 @@ def test_defaults_include_ollama_block(tmp_path, monkeypatch):
     assert cfg["ollama"]["model"] == "qwen35-opus-jarvis"
     assert cfg["ollama"]["classifier_model"] == "jarvis-classifier"
     assert cfg["ollama"]["routing_mode"] == "local_first"
-    assert cfg["ollama"]["timeout_seconds"] == 30
+    assert cfg["ollama"]["timeout_seconds"] == 300
 
 
 def test_load_deep_merges_ollama(tmp_path, monkeypatch):

@@ -533,6 +533,28 @@ def test_coding_tools_in_ollama_schema():
     assert "coding_review" in tool_names
 
 
+def test_http_client_uses_split_timeout(agent):
+    """OllamaAgent._http_client must use httpx.Timeout with short connect and long read."""
+    import httpx
+    t = agent._http_client.timeout
+    assert isinstance(t, httpx.Timeout), "Expected httpx.Timeout, not a flat number"
+    assert t.connect <= 10.0, f"Connect timeout should be ≤10s, got {t.connect}"
+    assert t.read >= 60.0, f"Read timeout should be ≥60s, got {t.read}"
+
+
+def test_timeout_seconds_config_sets_read_timeout(tmp_path, monkeypatch):
+    """timeout_seconds in config should set the read timeout, not the connect timeout."""
+    import httpx
+    monkeypatch.setattr("config.CONFIG_PATH", tmp_path / "config.json")
+    import config
+    cfg = config.load()
+    cfg["ollama"]["timeout_seconds"] = 120
+    from guardrails import Guardrails
+    a = OllamaAgent(config=cfg, guardrails=Guardrails(cfg))
+    assert a._http_client.timeout.read == 120.0
+    assert a._http_client.timeout.connect <= 10.0
+
+
 def test_coding_agent_passed_to_execute_tool(agent):
     """execute_tool should be called with the coding agent instance."""
     coding_response = _tool_response("coding_ask", {"question": "What is agent.py?", "cwd": "/p"})
