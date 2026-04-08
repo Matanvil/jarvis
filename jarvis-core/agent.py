@@ -549,12 +549,12 @@ class Agent:
                 }
                 steps.append(step)
 
-                if step["milestone"] and step_callback is not None:
+                if step_callback is not None:
                     step_callback({
                         "type": "step",
                         "label": _step_label(block.name),
                         "tool": block.name,
-                        "milestone": True,
+                        "milestone": step["milestone"],
                     })
 
                 try:

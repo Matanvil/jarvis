@@ -252,9 +252,9 @@ class OllamaAgent:
 
                     step = {"tool": name, "input_summary": str(args)[:100], "result_summary": "", "milestone": len(steps) == 0}
                     steps.append(step)
-                    if step["milestone"] and step_callback is not None:
+                    if step_callback is not None:
                         from agent import _step_label
-                        step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": True})
+                        step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
                     try:
                         result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=cwd, coding=self._coding)
                         step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]

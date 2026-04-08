@@ -530,7 +530,7 @@ def test_step_callback_called_at_milestone():
 
 
 def test_step_callback_not_called_for_non_milestone():
-    """step_callback is NOT called for non-milestone steps."""
+    """step_callback is called for ALL steps; second step has milestone=False."""
     called = []
 
     agent = make_agent()
@@ -567,6 +567,52 @@ def test_step_callback_not_called_for_non_milestone():
         with patch("agent.execute_tool", return_value="output"):
             agent.run("do something", step_callback=lambda e: called.append(e))
 
-    # Only first step is milestone
-    assert len(called) == 1
+    # Both steps fire step_callback; first is milestone, second is not
+    assert len(called) == 2
     assert called[0]["tool"] == "shell_run"
+    assert called[0]["milestone"] is True
+    assert called[1]["tool"] == "file_read"
+    assert called[1]["milestone"] is False
+
+
+def test_non_milestone_steps_fire_step_callback():
+    """step_callback must fire for every tool call with correct milestone flag."""
+    agent = make_agent()
+
+    block1 = MagicMock()
+    block1.type = "tool_use"
+    block1.id = "tu_1"
+    block1.name = "shell_run"
+    block1.input = {"command": "ls /"}
+
+    block2 = MagicMock()
+    block2.type = "tool_use"
+    block2.id = "tu_2"
+    block2.name = "shell_run"
+    block2.input = {"command": "ls /tmp"}
+
+    text = MagicMock()
+    text.type = "text"
+    text.text = "Done."
+
+    resp1 = MagicMock()
+    resp1.stop_reason = "tool_use"
+    resp1.content = [block1]
+
+    resp2 = MagicMock()
+    resp2.stop_reason = "tool_use"
+    resp2.content = [block2]
+
+    resp3 = MagicMock()
+    resp3.stop_reason = "end_turn"
+    resp3.content = [text]
+
+    step_events = []
+    with patch.object(agent._client.messages, "create", side_effect=[resp1, resp2, resp3]):
+        with patch("agent.execute_tool", return_value="output"):
+            agent.run("list dirs", step_callback=lambda e: step_events.append(e))
+
+    step_type_events = [e for e in step_events if e["type"] == "step"]
+    assert len(step_type_events) == 2, f"Expected 2 step events, got {len(step_type_events)}"
+    assert step_type_events[0]["milestone"] is True
+    assert step_type_events[1]["milestone"] is False

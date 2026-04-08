@@ -555,6 +555,45 @@ def test_timeout_seconds_config_sets_read_timeout(tmp_path, monkeypatch):
     assert a._http_client.timeout.connect <= 10.0
 
 
+def test_step_callback_fired_for_all_steps_not_just_first(agent):
+    """step_callback must be called for every tool call, not just the first (milestone)."""
+    responses = [
+        _tool_response("shell_run", {"command": "ls /"}, "call_1"),
+        _tool_response("shell_run", {"command": "ls /tmp"}, "call_2"),
+        _stop_response("Done."),
+    ]
+    step_events = []
+    with patch("httpx.Client.post", side_effect=responses):
+        with patch("ollama_agent.execute_tool", return_value="ok"):
+            agent.run("list dirs", step_callback=lambda e: step_events.append(e))
+
+    step_type_events = [e for e in step_events if e["type"] == "step"]
+    assert len(step_type_events) == 2, f"Expected 2 step events, got {len(step_type_events)}"
+    assert step_type_events[0]["milestone"] is True   # first step is milestone
+    assert step_type_events[1]["milestone"] is False  # second step is not
+
+
+def test_non_milestone_step_event_has_correct_fields(agent):
+    """Non-milestone step events must include type, label, tool, milestone=False."""
+    responses = [
+        _tool_response("shell_run", {"command": "ls /"}, "call_1"),
+        _tool_response("file_read", {"path": "/tmp/foo"}, "call_2"),
+        _stop_response("Done."),
+    ]
+    step_events = []
+    with patch("httpx.Client.post", side_effect=responses):
+        with patch("ollama_agent.execute_tool", return_value="ok"):
+            agent.run("do stuff", step_callback=lambda e: step_events.append(e))
+
+    non_milestones = [e for e in step_events if e.get("type") == "step" and not e["milestone"]]
+    assert len(non_milestones) == 1
+    e = non_milestones[0]
+    assert e["type"] == "step"
+    assert "label" in e
+    assert e["tool"] == "file_read"
+    assert e["milestone"] is False
+
+
 def test_coding_agent_passed_to_execute_tool(agent):
     """execute_tool should be called with the coding agent instance."""
     coding_response = _tool_response("coding_ask", {"question": "What is agent.py?", "cwd": "/p"})
