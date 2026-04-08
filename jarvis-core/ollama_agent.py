@@ -130,7 +130,7 @@ class OllamaAgent:
 
     @property
     def _timeout(self) -> float:
-        return float(self._config.get("ollama", {}).get("timeout_seconds", 30))
+        return float(self._config.get("ollama", {}).get("timeout_seconds", 300))
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
             history: list | None = None, step_callback=None,
