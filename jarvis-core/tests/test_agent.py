@@ -529,52 +529,6 @@ def test_step_callback_called_at_milestone():
     assert called[0]["milestone"] is True
 
 
-def test_step_callback_not_called_for_non_milestone():
-    """step_callback is called for ALL steps; second step has milestone=False."""
-    called = []
-
-    agent = make_agent()
-    # First tool (milestone=True), second tool (milestone=False for file_read at index 1)
-    block1 = MagicMock()
-    block1.type = "tool_use"
-    block1.id = "tu_1"
-    block1.name = "shell_run"
-    block1.input = {"command": "ls"}
-
-    block2 = MagicMock()
-    block2.type = "tool_use"
-    block2.id = "tu_2"
-    block2.name = "file_read"
-    block2.input = {"path": "/tmp/f"}
-
-    text = MagicMock()
-    text.type = "text"
-    text.text = "Done."
-
-    resp1 = MagicMock()
-    resp1.stop_reason = "tool_use"
-    resp1.content = [block1]
-
-    resp2 = MagicMock()
-    resp2.stop_reason = "tool_use"
-    resp2.content = [block2]
-
-    resp3 = MagicMock()
-    resp3.stop_reason = "end_turn"
-    resp3.content = [text]
-
-    with patch.object(agent._client.messages, "create", side_effect=[resp1, resp2, resp3]):
-        with patch("agent.execute_tool", return_value="output"):
-            agent.run("do something", step_callback=lambda e: called.append(e))
-
-    # Both steps fire step_callback; first is milestone, second is not
-    assert len(called) == 2
-    assert called[0]["tool"] == "shell_run"
-    assert called[0]["milestone"] is True
-    assert called[1]["tool"] == "file_read"
-    assert called[1]["milestone"] is False
-
-
 def test_non_milestone_steps_fire_step_callback():
     """step_callback must fire for every tool call with correct milestone flag."""
     agent = make_agent()

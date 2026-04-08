@@ -8,7 +8,7 @@ from tools.web import WebTool
 from tools.code import CodeTool
 from tools.macos import MacOSTool
 from tools._dispatch import execute_tool, format_response
-from agent import TOOL_DEFINITIONS, _BASE_SYSTEM_PROMPT
+from agent import TOOL_DEFINITIONS, _BASE_SYSTEM_PROMPT, _step_label
 from tools._errors import ApprovalRequiredError
 
 # Appended to the base system prompt for local models that need extra guidance
@@ -253,7 +253,6 @@ class OllamaAgent:
                     step = {"tool": name, "input_summary": str(args)[:100], "result_summary": "", "milestone": len(steps) == 0}
                     steps.append(step)
                     if step_callback is not None:
-                        from agent import _step_label
                         step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
                     try:
                         result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=cwd, coding=self._coding)
