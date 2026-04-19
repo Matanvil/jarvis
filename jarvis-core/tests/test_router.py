@@ -297,7 +297,8 @@ def test_intent_class_destructive_annotated_in_metadata(config):
 def local_first_router(config, mock_ollama_agent, mock_haiku_agent, mock_sonnet_agent):
     config["ollama"]["routing_mode"] = "local_first"
     config["ollama"]["model"] = "qwen-executor"
-    config["ollama"]["classifier_model"] = "jarvis-classifier"
+    config["ollama"]["executor_model"] = "supergemma4-test"
+    config["ollama"]["classifier_model"] = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
     guardrails = Guardrails(config)
     r = Router(config=config, guardrails=guardrails)
     r._ollama = mock_ollama_agent
@@ -312,7 +313,7 @@ def test_local_first_uses_ollama_for_simple_tasks(local_first_router, mock_ollam
     mock_ollama_agent.run.assert_called_once()
     mock_sonnet_agent.run.assert_not_called()
     assert result["_agent"] == "ollama"
-    assert result["_model"] == "qwen-executor"
+    assert result["_model"] == "supergemma4-test"
 
 
 def test_local_first_uses_sonnet_for_complex_reasoning(local_first_router, mock_ollama_agent, mock_sonnet_agent):
@@ -348,10 +349,10 @@ def test_local_first_classifier_failure_falls_back_to_ollama(local_first_router,
 def test_classifier_uses_classifier_model(config):
     """_classifier_model should use classifier_model key when present."""
     config["ollama"]["model"] = "qwen-executor"
-    config["ollama"]["classifier_model"] = "jarvis-classifier"
+    config["ollama"]["classifier_model"] = "mlx-community/Qwen3-4B-Instruct-2507-4bit"
     guardrails = Guardrails(config)
     r = Router(config=config, guardrails=guardrails)
-    assert r._classifier_model == "jarvis-classifier"
+    assert r._classifier_model == "mlx-community/Qwen3-4B-Instruct-2507-4bit"
     assert r._ollama_model == "qwen-executor"
 
 
@@ -370,13 +371,13 @@ def test_default_executor_model_is_qwen35_opus_jarvis():
 def test_classifier_model_in_defaults():
     """classifier_model should be present in DEFAULTS and point to jarvis-classifier."""
     from config import DEFAULTS
-    assert DEFAULTS["ollama"]["classifier_model"] == "jarvis-classifier"
+    assert DEFAULTS["ollama"]["classifier_model"] == "mlx-community/Qwen3-4B-Instruct-2507-4bit"
 
 
 def test_local_first_annotates_result_with_executor_model_name(local_first_router, mock_ollama_agent):
     """_model in result should reflect the ollama.model (executor), not classifier_model."""
     result = local_first_router.process("list my files")
-    assert result["_model"] == "qwen-executor"  # matches what local_first_router fixture sets
+    assert result["_model"] == "supergemma4-test"  # matches what local_first_router fixture sets
 
 
 # ── history tool summary ──────────────────────────────────────────────────────

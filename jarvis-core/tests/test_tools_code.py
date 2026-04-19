@@ -19,7 +19,7 @@ def test_run_python_with_error():
 
 def test_run_shell_script():
     tool = CodeTool()
-    result = tool.run_snippet("echo 'from shell script'", "bash")
+    result = tool.run_shell_script("echo 'from shell script'")
     assert result["exit_code"] == 0
     assert "from shell script" in result["stdout"]
 

@@ -13,8 +13,6 @@ _RUNTIMES: dict[str, tuple[list[str], str]] = {
     "node":       (["node", "{file}"], ".js"),
     "typescript": (["npx", "--yes", "tsx", "{file}"], ".ts"),
     "ts":         (["npx", "--yes", "tsx", "{file}"], ".ts"),
-    "bash":       (["bash", "{file}"], ".sh"),
-    "sh":         (["bash", "{file}"], ".sh"),
     "ruby":       (["ruby", "{file}"], ".rb"),
     "rb":         (["ruby", "{file}"], ".rb"),
     "swift":      (["swift", "{file}"], ".swift"),
@@ -76,4 +74,5 @@ class CodeTool:
         return self.run_snippet(code, "typescript", cwd=cwd, timeout=timeout)
 
     def run_shell_script(self, script: str, cwd: str | None = None, timeout: int = 30) -> dict:
-        return self.run_snippet(script, "bash", cwd=cwd, timeout=timeout)
+        from tools.shell import ShellTool
+        return ShellTool().run(script, cwd=cwd, timeout=timeout)

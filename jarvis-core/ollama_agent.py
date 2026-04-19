@@ -18,6 +18,7 @@ CRITICAL RULES FOR THIS MODEL:
 - ALWAYS use the provided tool/function calls to take action. NEVER write tool calls as JSON text in your response.
 - If you need to run a command or write a file, call the tool — do not describe it in text.
 - NEVER claim to have performed an action without first calling the tool. No tool call = no action taken.
+- To read a file always call file_read — NEVER use shell_run to cat/head/tail a file.
 - Be efficient: once you have enough information to answer, stop calling tools and respond. Do NOT keep gathering extra data beyond what the user asked for.
 - You have a limited number of tool calls. Use only what is needed — typically 1-3 calls. Do not explore tangents.
 - CODING TOOLS RULE: After calling coding_ask, coding_plan, or coding_review — call finalize IMMEDIATELY. These tools return complete answers. Do NOT call shell_run, file_read, list_dir, find_files, or any other tool after them. One coding tool call → finalize. That is the entire sequence.
@@ -207,11 +208,17 @@ class OllamaAgent:
 
     @property
     def _host(self) -> str:
-        return self._config.get("ollama", {}).get("host", "http://localhost:11434")
+        ollama = self._config.get("ollama", {})
+        return ollama.get("executor_host") or ollama.get("host", "http://localhost:11434")
 
     @property
     def _model(self) -> str:
-        return self._config.get("ollama", {}).get("model", "mistral:latest")
+        ollama = self._config.get("ollama", {})
+        return ollama.get("executor_model") or ollama.get("model", "mistral:latest")
+
+    @property
+    def _chat_template_kwargs(self) -> dict | None:
+        return self._config.get("ollama", {}).get("executor_chat_template_kwargs")
 
     @property
     def _routing_mode(self) -> str:
@@ -253,6 +260,8 @@ class OllamaAgent:
         try:
             for step_idx in range(max_steps):
                 payload = {"model": self._model, "messages": messages, "tools": _OLLAMA_TOOLS}
+                if self._chat_template_kwargs:
+                    payload["chat_template_kwargs"] = self._chat_template_kwargs
 
                 msg, finish = _stream_call(
                     self._http_client,
@@ -263,6 +272,8 @@ class OllamaAgent:
 
                 if finish == "stop" or not msg.get("tool_calls"):
                     text = _clean_ollama_text(msg.get("content") or "")
+                    if not text and not tool_calls_made and finish != "stop":
+                        raise EscalateToCloud("Empty response from local executor — server may have crashed")
                     result = format_response(text, tool_calls_made)
                     result["steps"] = steps
                     return result

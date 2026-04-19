@@ -32,6 +32,11 @@ DEFAULTS = {
         "classifier_model": "jarvis-classifier",
         "routing_mode": "local_first",   # local_first | haiku_first | ollama_first | claude_only | ollama_only
         "timeout_seconds": 300,
+        "executor_host": "http://127.0.0.1:8090",
+        "executor_model": "Jiunsong/supergemma4-26b-uncensored-mlx-4bit-v2",
+        "executor_chat_template_kwargs": {"enable_thinking": False},
+        "classifier_host": "http://127.0.0.1:8090",
+        "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
     },
     "reasoning": {
         "max_steps_claude": 10,

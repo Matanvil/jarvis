@@ -1,0 +1,44 @@
+{
+  "generated_at": "2026-04-19T20:35:06+0300",
+  "host": "http://127.0.0.1:8090",
+  "limit": 20,
+  "num_ctx": 8192,
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "results": [
+    {
+      "model": "Jiunsong/supergemma4-26b-uncensored-mlx-4bit-v2",
+      "num_ctx": 8192,
+      "total": 20,
+      "tool_correct": 19,
+      "args_valid": 19,
+      "completed": 19,
+      "bad_json": 0,
+      "errors": 1,
+      "tool_acc_pct": 95.0,
+      "args_acc_pct": 95.0,
+      "avg_latency_ms": 949.0868626424344,
+      "p50_latency_ms": 920.3297504864167,
+      "p95_latency_ms": 1485.7523340033367,
+      "category_correct": {
+        "simple": [
+          10,
+          10
+        ],
+        "multi_step": [
+          4,
+          4
+        ],
+        "reasoning": [
+          5,
+          5
+        ],
+        "edge": [
+          0,
+          0
+        ]
+      }
+    }
+  ]
+}
