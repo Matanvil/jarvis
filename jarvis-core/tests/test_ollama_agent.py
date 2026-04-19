@@ -721,6 +721,11 @@ def test_run_no_spurious_token_events_during_tool_call_round(agent):
         with patch("ollama_agent.execute_tool", return_value="file list"):
             agent.run("list files", step_callback=lambda e: events.append(e))
 
+    # Verify zero tokens emitted during the tool call round (before first step event)
+    first_step_idx = next((i for i, e in enumerate(events) if e.get("type") == "step"), len(events))
+    pre_step_tokens = [e for e in events[:first_step_idx] if e.get("type") == "token"]
+    assert pre_step_tokens == [], f"Tool call round emitted spurious tokens: {pre_step_tokens}"
+
     # All token events should come from the final text round only (not the tool call round)
     token_events = [e for e in events if e.get("type") == "token"]
     assert len(token_events) > 0, "Expected token events from final text response"
