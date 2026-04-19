@@ -352,7 +352,14 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             if stepVoice, milestone {
                 speak(label)
             }
+        case "token":
+            let token = event["text"] as? String ?? ""
+            if !token.isEmpty {
+                viewModel.appendToken(token)
+                showHUD(.response(text: viewModel.streamingBuffer))
+            }
         case "complete":
+            viewModel.clearStreamingBuffer()
             if let data = try? JSONSerialization.data(withJSONObject: event),
                let response = try? JSONDecoder().decode(CommandResponse.self, from: data) {
                 viewModel.finalizeTurn(response: response.text)
