@@ -688,6 +688,49 @@ def test_stream_call_reraises_httpx_timeout(agent):
                          {"model": "test", "messages": [], "tools": []}, step_callback=None)
 
 
+def test_run_fires_token_events_for_text_response(agent):
+    """When Ollama streams a text answer, run() must forward token events via step_callback."""
+    text = "Your system has 64GB RAM."
+    lines = _make_streaming_text_response(text)
+
+    events = []
+    with patch.object(agent._http_client, "stream", return_value=_mock_stream(lines)):
+        agent.run("what are my specs", step_callback=lambda e: events.append(e))
+
+    token_events = [e for e in events if e.get("type") == "token"]
+    assert len(token_events) > 0, "Expected token events, got none"
+    assembled = "".join(e["text"] for e in token_events)
+    assert assembled == text
+
+
+def test_run_no_spurious_token_events_during_tool_call_round(agent):
+    """Tool call rounds must not emit token events — only step events for that round."""
+    tool_lines = _make_streaming_tool_response("shell_run", {"command": "ls"}, "call_1")
+    stop_lines = _make_streaming_text_response("Done.")
+
+    events = []
+    call_count = [0]
+
+    def fake_stream(method, url, json=None, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return _mock_stream(tool_lines)
+        return _mock_stream(stop_lines)
+
+    with patch.object(agent._http_client, "stream", side_effect=fake_stream):
+        with patch("ollama_agent.execute_tool", return_value="file list"):
+            agent.run("list files", step_callback=lambda e: events.append(e))
+
+    # All token events should come from the final text round only (not the tool call round)
+    token_events = [e for e in events if e.get("type") == "token"]
+    assert len(token_events) > 0, "Expected token events from final text response"
+    assembled = "".join(e["text"] for e in token_events)
+    assert assembled == "Done."
+    # Also verify there was at least one step event (from the tool call)
+    step_events = [e for e in events if e.get("type") == "step"]
+    assert len(step_events) >= 1
+
+
 def test_coding_agent_passed_to_execute_tool(agent):
     """execute_tool should be called with the coding agent instance."""
     coding_response = _tool_response("coding_ask", {"question": "What is agent.py?", "cwd": "/p"})
