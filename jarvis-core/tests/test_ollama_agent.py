@@ -625,8 +625,6 @@ def _make_streaming_text_response(text: str):
 def _mock_stream(lines):
     """Return a mock context manager that yields the given SSE lines."""
     mock_resp = MagicMock()
-    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-    mock_resp.__exit__ = MagicMock(return_value=False)
     mock_resp.raise_for_status = MagicMock()
     mock_resp.iter_lines = MagicMock(return_value=iter(lines))
     mock_ctx = MagicMock()
@@ -665,21 +663,29 @@ def test_stream_call_skips_role_only_chunks(agent):
     assert msg["tool_calls"][0]["function"]["name"] == "shell_run"
 
 
-def test_stream_call_falls_back_to_non_streaming_on_error(agent):
-    """If streaming raises, _stream_call retries with stream=False and returns result."""
-    import httpx
+def test_stream_call_falls_back_to_non_streaming_on_parse_error(agent):
+    """If streaming raises a non-httpx error (e.g. ValueError), _stream_call retries with stream=False."""
     non_streaming_resp = MagicMock()
     non_streaming_resp.raise_for_status = MagicMock()
     non_streaming_resp.json.return_value = {
         "choices": [{"message": {"role": "assistant", "content": "fallback answer", "tool_calls": None},
                      "finish_reason": "stop"}]
     }
-    with patch.object(agent._http_client, "stream", side_effect=httpx.ReadTimeout("timed out")):
+    with patch.object(agent._http_client, "stream", side_effect=ValueError("unexpected stream format")):
         with patch.object(agent._http_client, "post", return_value=non_streaming_resp):
             msg, finish = _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
                                        {"model": "test", "messages": [], "tools": []}, step_callback=None)
     assert msg["content"] == "fallback answer"
     assert finish == "stop"
+
+
+def test_stream_call_reraises_httpx_timeout(agent):
+    """httpx.TimeoutException from streaming must propagate up, not fall back to non-streaming."""
+    import httpx
+    with patch.object(agent._http_client, "stream", side_effect=httpx.ReadTimeout("timed out")):
+        with pytest.raises(httpx.TimeoutException):
+            _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                         {"model": "test", "messages": [], "tools": []}, step_callback=None)
 
 
 def test_coding_agent_passed_to_execute_tool(agent):

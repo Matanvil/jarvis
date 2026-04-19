@@ -146,7 +146,7 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
                             accumulated[idx]["id"] = tc_delta["id"]
                         func = tc_delta.get("function", {})
                         if func.get("name"):
-                            accumulated[idx]["name"] += func["name"]
+                            accumulated[idx]["name"] = func["name"]
                         if func.get("arguments"):
                             accumulated[idx]["arguments"] += func["arguments"]
 
@@ -167,8 +167,10 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
         else:
             return {"role": "assistant", "content": full_content, "tool_calls": None}, finish_reason
 
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError):
+        raise
     except Exception:
-        # Fallback: non-streaming retry
+        # Fallback: non-streaming retry on parse/streaming errors
         fallback_payload = {k: v for k, v in payload.items() if k != "stream"}
         resp = client.post(url, json=fallback_payload)
         resp.raise_for_status()
