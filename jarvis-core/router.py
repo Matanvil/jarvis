@@ -77,6 +77,11 @@ class Router:
         return ollama_cfg.get("classifier_model", ollama_cfg.get("model", "mistral:latest"))
 
     @property
+    def _classifier_host(self) -> str:
+        ollama_cfg = self._config.get("ollama", {})
+        return ollama_cfg.get("classifier_host") or ollama_cfg.get("host", "http://localhost:11434")
+
+    @property
     def _ollama_host(self) -> str:
         return self._config.get("ollama", {}).get("host", "http://localhost:11434")
 
@@ -87,21 +92,25 @@ class Router:
     def _classify(self, text: str) -> dict:
         """Ask Ollama to classify intent. Returns classification dict.
         Raises on any error — caller handles gracefully."""
-        with httpx.Client(timeout=self._ollama_timeout) as client:
+        with httpx.Client(timeout=httpx.Timeout(connect=5.0, read=self._ollama_timeout, write=30.0, pool=5.0)) as client:
             resp = client.post(
-                f"{self._ollama_host}/v1/chat/completions",
+                f"{self._classifier_host}/v1/chat/completions",
                 json={
                     "model": self._classifier_model,
                     "messages": [
                         {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
                         {"role": "user", "content": text},
                     ],
+                    "chat_template_kwargs": {"enable_thinking": False},
                 },
             )
             resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            content = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-            return json.loads(content)
+            content = resp.json()["choices"][0]["message"]["content"] or ""
+            # Extract JSON robustly — model may wrap output in tags or non-Latin text
+            start, end = content.find("{"), content.rfind("}")
+            if start == -1 or end == -1:
+                raise ValueError(f"No JSON object found in classifier response: {content!r}")
+            return json.loads(content[start:end + 1])
 
     def process(self, text: str, cwd: str | None = None, memory_context: str = "",
                 source: str = "", step_callback=None) -> dict:
@@ -153,11 +162,12 @@ class Router:
                                       escalated=False, escalation_reason=classification.get("reason"),
                                       intent_class=intent_class, start=start)
 
-            # Non-complex: use local OllamaAgent (qwen-executor); escalate to Sonnet on failure
+            # Non-complex: use local OllamaAgent; escalate to Sonnet on failure
             try:
                 result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, step_callback=step_callback, intent_class=intent_class)
                 self._update_history(text, result)
-                return self._annotate(result, agent="ollama", model=self._ollama_model,
+                executor_model = self._config.get("ollama", {}).get("executor_model") or self._ollama_model
+                return self._annotate(result, agent="ollama", model=executor_model,
                                       escalated=False, escalation_reason=None,
                                       intent_class=intent_class, start=start)
             except EscalateToCloud as e:
@@ -196,14 +206,15 @@ class Router:
         escalation_reason = None
         if mode == "ollama_only" or can_handle_locally:
             try:
-                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, intent_class=intent_class)
+                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, step_callback=step_callback, intent_class=intent_class)
                 self._update_history(text, result)
                 return self._annotate(result, agent="ollama", model=self._ollama_model,
                                       escalated=False, escalation_reason=None,
                                       intent_class=intent_class, start=start)
             except EscalateToCloud as e:
                 if mode == "ollama_only":
-                    result = {"speak": "Offline mode — cannot escalate.", "display": "Offline mode — cannot escalate.", "steps": []}
+                    msg = f"Local model unavailable: {e.reason}"
+                    result = {"speak": msg, "display": msg, "steps": []}
                     return self._annotate(result, agent="ollama", model=self._ollama_model,
                                           escalated=True, escalation_reason=f"suppressed:ollama_only:{e.reason}",
                                           intent_class=intent_class, start=start)

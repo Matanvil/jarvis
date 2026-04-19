@@ -43,21 +43,23 @@ def test_defaults_include_ollama_block(tmp_path, monkeypatch):
     cfg = config.load()
     assert "ollama" in cfg
     assert cfg["ollama"]["host"] == "http://localhost:11434"
-    assert cfg["ollama"]["model"] == "llama3.1:8b"
-    assert cfg["ollama"]["routing_mode"] == "haiku_first"
-    assert cfg["ollama"]["timeout_seconds"] == 30
+    assert cfg["ollama"]["model"] == "qwen35-opus-jarvis"
+    assert cfg["ollama"]["classifier_model"] == "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+    assert cfg["ollama"]["routing_mode"] == "local_first"
+    assert cfg["ollama"]["timeout_seconds"] == 300
 
 
 def test_load_deep_merges_ollama(tmp_path, monkeypatch):
     monkeypatch.setattr("config.CONFIG_PATH", tmp_path / "config.json")
     (tmp_path / "config.json").write_text(json.dumps({
-        "ollama": {"model": "llama3.1:8b"}
+        "ollama": {"model": "custom-model"}
     }))
     cfg = config.load()
     # custom model preserved, other keys filled from defaults
-    assert cfg["ollama"]["model"] == "llama3.1:8b"
+    assert cfg["ollama"]["model"] == "custom-model"
     assert cfg["ollama"]["host"] == "http://localhost:11434"
-    assert cfg["ollama"]["routing_mode"] == "haiku_first"
+    assert cfg["ollama"]["routing_mode"] == "local_first"
+    assert cfg["ollama"]["classifier_model"] == "mlx-community/Qwen3-4B-Instruct-2507-4bit"
 
 
 def test_defaults_include_reasoning_block(tmp_path, monkeypatch):

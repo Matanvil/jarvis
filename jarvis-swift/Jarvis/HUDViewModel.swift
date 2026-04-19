@@ -29,6 +29,9 @@ class HUDViewModel: ObservableObject {
     /// Set to true to focus the text input field. Resets itself to false after focus is applied (one-shot).
     @Published var focusTextInput: Bool = false
 
+    /// Accumulates streaming tokens for live display. Cleared when the turn finalizes.
+    @Published var streamingBuffer: String = ""
+
     /// Start time of the current session (first command's timestamp). Used for save filename.
     private(set) var sessionStart: Date = Date()
 
@@ -58,6 +61,16 @@ class HUDViewModel: ObservableObject {
     func finalizeTurn(response: String) {
         guard !turns.isEmpty else { return }
         turns[turns.count - 1].response = response
+    }
+
+    /// Append a streaming token to the live buffer.
+    func appendToken(_ token: String) {
+        streamingBuffer += token
+    }
+
+    /// Clear the streaming buffer (called when complete event arrives).
+    func clearStreamingBuffer() {
+        streamingBuffer = ""
     }
 
     /// Save current session and clear the thread.

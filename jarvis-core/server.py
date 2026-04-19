@@ -68,10 +68,52 @@ def _ensure_ollama_running() -> None:
     logging.info("[Jarvis] ollama serve started via %s", ollama_bin)
 
 
+def _ensure_mlx_server_running(config: dict) -> None:
+    """Start mlx_lm.server in the background if local_first mode is active and it isn't already running."""
+    ollama_cfg = config.get("ollama", {})
+    if ollama_cfg.get("routing_mode") != "local_first":
+        return
+    executor_host = ollama_cfg.get("executor_host", "")
+    executor_model = ollama_cfg.get("executor_model", "")
+    if not executor_host or not executor_model:
+        return
+
+    try:
+        r = httpx.get(f"{executor_host}/v1/models", timeout=2)
+        if r.status_code < 500:
+            return  # already running
+    except Exception:
+        pass  # not running — start it
+
+    mlx_bin = (
+        shutil.which("mlx_lm.server")
+        or (p if (p := "/opt/homebrew/bin/mlx_lm.server") and os.path.exists(p) else None)
+    )
+    if not mlx_bin:
+        logging.warning("[Jarvis] mlx_lm.server binary not found — skipping auto-start")
+        return
+
+    from urllib.parse import urlparse
+    parsed = urlparse(executor_host)
+    port = parsed.port or 8090
+
+    chat_template_kwargs = ollama_cfg.get("executor_chat_template_kwargs", {})
+    chat_template_args = json.dumps(chat_template_kwargs) if chat_template_kwargs else None
+
+    cmd = [mlx_bin, "--model", executor_model, "--port", str(port)]
+    if chat_template_args:
+        cmd += ["--chat-template-args", chat_template_args]
+
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    logging.info("[Jarvis] mlx_lm.server started: model=%s port=%d", executor_model, port)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
+    config = cfg_module.load()
     _ensure_ollama_running()
+    _ensure_mlx_server_running(config)
     alert_bus.set_loop(asyncio.get_running_loop())
     _pipeline, _loggers, _guardrails, store = load_dependencies()
     scheduler = Scheduler(store=store, pipeline=_pipeline)

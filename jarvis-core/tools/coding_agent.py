@@ -33,10 +33,13 @@ class CodingAgentTool:
         )
         local_model = config.get("local_model", "")
         if local_model:
-            self._llm = HybridClient(
+            hybrid = HybridClient(
                 ollama=OllamaClient(model=local_model, base_url=ollama_host),
                 claude=claude,
             )
+            if config.get("ollama", {}).get("routing_mode") == "ollama_only":
+                hybrid.force_local = True
+            self._llm = hybrid
         else:
             self._llm = claude
         self._embedder = OllamaEmbedder(

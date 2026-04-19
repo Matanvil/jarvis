@@ -8,7 +8,7 @@ from tools.web import WebTool
 from tools.code import CodeTool
 from tools.macos import MacOSTool
 from tools._dispatch import execute_tool, format_response
-from agent import TOOL_DEFINITIONS, _BASE_SYSTEM_PROMPT
+from agent import TOOL_DEFINITIONS, _BASE_SYSTEM_PROMPT, _step_label
 from tools._errors import ApprovalRequiredError
 
 # Appended to the base system prompt for local models that need extra guidance
@@ -18,6 +18,7 @@ CRITICAL RULES FOR THIS MODEL:
 - ALWAYS use the provided tool/function calls to take action. NEVER write tool calls as JSON text in your response.
 - If you need to run a command or write a file, call the tool — do not describe it in text.
 - NEVER claim to have performed an action without first calling the tool. No tool call = no action taken.
+- To read a file always call file_read — NEVER use shell_run to cat/head/tail a file.
 - Be efficient: once you have enough information to answer, stop calling tools and respond. Do NOT keep gathering extra data beyond what the user asked for.
 - You have a limited number of tool calls. Use only what is needed — typically 1-3 calls. Do not explore tangents.
 - CODING TOOLS RULE: After calling coding_ask, coding_plan, or coding_review — call finalize IMMEDIATELY. These tools return complete answers. Do NOT call shell_run, file_read, list_dir, find_files, or any other tool after them. One coding tool call → finalize. That is the entire sequence.
@@ -90,6 +91,95 @@ _FINALIZE_TOOL = {
 _OLLAMA_TOOLS = _anthropic_to_ollama_tools(_OLLAMA_SAFE_TOOL_DEFINITIONS) + [_FINALIZE_TOOL]
 
 
+def _stream_call(client: "httpx.Client", url: str, payload: dict,
+                 step_callback) -> tuple[dict, str | None]:
+    """Make a streaming LLM call. Returns (msg, finish_reason) in same shape as non-streaming.
+
+    Branches on first meaningful chunk:
+    - tool_calls: accumulate fragments silently, no visual output
+    - content: fire step_callback({"type": "token", "text": token}) for each token
+
+    Falls back to non-streaming POST on any exception.
+    """
+    try:
+        with client.stream("POST", url, json={**payload, "stream": True}) as resp:
+            resp.raise_for_status()
+            full_content = ""
+            accumulated: dict[int, dict] = {}  # index → {id, name, arguments}
+            finish_reason: str | None = None
+            is_text: bool | None = None  # None until first meaningful chunk
+
+            for line in resp.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                choice = chunk["choices"][0]
+                delta = choice.get("delta", {})
+                if choice.get("finish_reason"):
+                    finish_reason = choice["finish_reason"]
+
+                # Determine branch on first chunk that has content or tool_calls
+                if is_text is None:
+                    if delta.get("content"):
+                        is_text = True
+                    elif delta.get("tool_calls"):
+                        is_text = False
+
+                if is_text:
+                    token = delta.get("content", "")
+                    if token:
+                        full_content += token
+                        if step_callback:
+                            step_callback({"type": "token", "text": token})
+                elif is_text is False:
+                    for tc_delta in delta.get("tool_calls", []):
+                        idx = tc_delta.get("index", 0)
+                        if idx not in accumulated:
+                            accumulated[idx] = {"id": "", "name": "", "arguments": ""}
+                        if tc_delta.get("id"):
+                            accumulated[idx]["id"] = tc_delta["id"]
+                        func = tc_delta.get("function", {})
+                        if func.get("name"):
+                            accumulated[idx]["name"] = func["name"]
+                        if func.get("arguments"):
+                            accumulated[idx]["arguments"] += func["arguments"]
+
+        # Reconstruct msg in non-streaming shape
+        if accumulated:
+            tool_calls = [
+                {
+                    "id": accumulated[i]["id"],
+                    "type": "function",
+                    "function": {
+                        "name": accumulated[i]["name"],
+                        "arguments": accumulated[i]["arguments"],
+                    },
+                }
+                for i in sorted(accumulated)
+            ]
+            return {"role": "assistant", "content": full_content or "", "tool_calls": tool_calls}, finish_reason
+        else:
+            return {"role": "assistant", "content": full_content, "tool_calls": None}, finish_reason
+
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError):
+        raise
+    except Exception:
+        # Fallback: non-streaming retry on parse/streaming errors
+        fallback_payload = {k: v for k, v in payload.items() if k != "stream"}
+        resp = client.post(url, json=fallback_payload)
+        resp.raise_for_status()
+        data = resp.json()
+        choice = data["choices"][0]
+        return choice["message"], choice.get("finish_reason")
+
+
 class OllamaAgent:
     def __init__(self, config: dict, guardrails: Guardrails):
         self._config = config
@@ -103,7 +193,9 @@ class OllamaAgent:
         # Shared client reuses TCP connection to the persistent Ollama process.
         # Note: if timeout is updated via POST /config after construction, the
         # existing client will not pick up the new value — acceptable for now.
-        self._http_client = httpx.Client(timeout=self._timeout)
+        self._http_client = httpx.Client(
+            timeout=httpx.Timeout(connect=5.0, read=self._timeout, write=30.0, pool=5.0)
+        )
 
     def close(self) -> None:
         self._http_client.close()
@@ -116,11 +208,17 @@ class OllamaAgent:
 
     @property
     def _host(self) -> str:
-        return self._config.get("ollama", {}).get("host", "http://localhost:11434")
+        ollama = self._config.get("ollama", {})
+        return ollama.get("executor_host") or ollama.get("host", "http://localhost:11434")
 
     @property
     def _model(self) -> str:
-        return self._config.get("ollama", {}).get("model", "mistral:latest")
+        ollama = self._config.get("ollama", {})
+        return ollama.get("executor_model") or ollama.get("model", "mistral:latest")
+
+    @property
+    def _chat_template_kwargs(self) -> dict | None:
+        return self._config.get("ollama", {}).get("executor_chat_template_kwargs")
 
     @property
     def _routing_mode(self) -> str:
@@ -128,7 +226,7 @@ class OllamaAgent:
 
     @property
     def _timeout(self) -> float:
-        return float(self._config.get("ollama", {}).get("timeout_seconds", 30))
+        return float(self._config.get("ollama", {}).get("timeout_seconds", 300))
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
             history: list | None = None, step_callback=None,
@@ -162,19 +260,20 @@ class OllamaAgent:
         try:
             for step_idx in range(max_steps):
                 payload = {"model": self._model, "messages": messages, "tools": _OLLAMA_TOOLS}
+                if self._chat_template_kwargs:
+                    payload["chat_template_kwargs"] = self._chat_template_kwargs
 
-                resp = self._http_client.post(
+                msg, finish = _stream_call(
+                    self._http_client,
                     f"{self._host}/v1/chat/completions",
-                    json=payload,
+                    payload,
+                    step_callback,
                 )
-                resp.raise_for_status()
-                data = resp.json()
-                choice = data["choices"][0]
-                msg = choice["message"]
-                finish = choice["finish_reason"]
 
                 if finish == "stop" or not msg.get("tool_calls"):
                     text = _clean_ollama_text(msg.get("content") or "")
+                    if not text and not tool_calls_made and finish != "stop":
+                        raise EscalateToCloud("Empty response from local executor — server may have crashed")
                     result = format_response(text, tool_calls_made)
                     result["steps"] = steps
                     return result
@@ -250,9 +349,8 @@ class OllamaAgent:
 
                     step = {"tool": name, "input_summary": str(args)[:100], "result_summary": "", "milestone": len(steps) == 0}
                     steps.append(step)
-                    if step["milestone"] and step_callback is not None:
-                        from agent import _step_label
-                        step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": True})
+                    if step_callback is not None:
+                        step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
                     try:
                         result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=cwd, coding=self._coding)
                         step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]

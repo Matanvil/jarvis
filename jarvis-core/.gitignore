@@ -1,0 +1,6 @@
+# Benchmark artifacts
+ai_coding_agent_*.json
+benchmark_*.json
+
+# Generated/external source dirs
+src/

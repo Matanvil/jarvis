@@ -533,6 +533,209 @@ def test_coding_tools_in_ollama_schema():
     assert "coding_review" in tool_names
 
 
+def test_http_client_uses_split_timeout(agent):
+    """OllamaAgent._http_client must use httpx.Timeout with short connect and long read."""
+    import httpx
+    t = agent._http_client.timeout
+    assert isinstance(t, httpx.Timeout), "Expected httpx.Timeout, not a flat number"
+    assert t.connect <= 10.0, f"Connect timeout should be ≤10s, got {t.connect}"
+    assert t.read >= 60.0, f"Read timeout should be ≥60s, got {t.read}"
+
+
+def test_timeout_seconds_config_sets_read_timeout(tmp_path, monkeypatch):
+    """timeout_seconds in config should set the read timeout, not the connect timeout."""
+    import httpx
+    monkeypatch.setattr("config.CONFIG_PATH", tmp_path / "config.json")
+    import config
+    cfg = config.load()
+    cfg["ollama"]["timeout_seconds"] = 120
+    from guardrails import Guardrails
+    a = OllamaAgent(config=cfg, guardrails=Guardrails(cfg))
+    assert a._http_client.timeout.read == 120.0
+    assert a._http_client.timeout.connect <= 10.0
+
+
+def test_step_callback_fired_for_all_steps_not_just_first(agent):
+    """step_callback must be called for every tool call, not just the first (milestone)."""
+    responses = [
+        _tool_response("shell_run", {"command": "ls /"}, "call_1"),
+        _tool_response("shell_run", {"command": "ls /tmp"}, "call_2"),
+        _stop_response("Done."),
+    ]
+    step_events = []
+    with patch("httpx.Client.post", side_effect=responses):
+        with patch("ollama_agent.execute_tool", return_value="ok"):
+            agent.run("list dirs", step_callback=lambda e: step_events.append(e))
+
+    step_type_events = [e for e in step_events if e["type"] == "step"]
+    assert len(step_type_events) == 2, f"Expected 2 step events, got {len(step_type_events)}"
+    assert step_type_events[0]["milestone"] is True   # first step is milestone
+    assert step_type_events[1]["milestone"] is False  # second step is not
+
+
+def test_non_milestone_step_event_has_correct_fields(agent):
+    """Non-milestone step events must include type, label, tool, milestone=False."""
+    responses = [
+        _tool_response("shell_run", {"command": "ls /"}, "call_1"),
+        _tool_response("file_read", {"path": "/tmp/foo"}, "call_2"),
+        _stop_response("Done."),
+    ]
+    step_events = []
+    with patch("httpx.Client.post", side_effect=responses):
+        with patch("ollama_agent.execute_tool", return_value="ok"):
+            agent.run("do stuff", step_callback=lambda e: step_events.append(e))
+
+    non_milestones = [e for e in step_events if e.get("type") == "step" and not e["milestone"]]
+    assert len(non_milestones) == 1
+    e = non_milestones[0]
+    assert e["type"] == "step"
+    assert "label" in e
+    assert e["tool"] == "file_read"
+    assert e["milestone"] is False
+
+
+from ollama_agent import _stream_call
+import json as _json_mod
+
+
+def _make_streaming_tool_response(tool_name: str, args: dict, call_id: str = "call_1"):
+    """Build list of SSE line strings simulating a streaming tool call response."""
+    args_str = _json_mod.dumps(args)
+    mid = len(args_str) // 2
+    lines = [
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"role": "assistant", "content": "", "tool_calls": [{"index": 0, "id": call_id, "type": "function", "function": {"name": tool_name, "arguments": ""}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": args_str[:mid]}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": args_str[mid:]}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})}',
+        "data: [DONE]",
+    ]
+    return lines
+
+
+def _make_streaming_text_response(text: str):
+    """Build list of SSE line strings simulating a streaming text response."""
+    lines = []
+    for char in text:
+        lines.append(f'data: {_json_mod.dumps({"choices": [{"delta": {"content": char}, "finish_reason": None}]})}')
+    lines.append(f'data: {_json_mod.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}]})}')
+    lines.append("data: [DONE]")
+    return lines
+
+
+def _mock_stream(lines):
+    """Return a mock context manager that yields the given SSE lines."""
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.iter_lines = MagicMock(return_value=iter(lines))
+    mock_ctx = MagicMock()
+    mock_ctx.__enter__ = MagicMock(return_value=mock_resp)
+    mock_ctx.__exit__ = MagicMock(return_value=False)
+    return mock_ctx
+
+
+def test_stream_call_accumulates_tool_call_fragments(agent):
+    """_stream_call must reassemble fragmented tool call arguments into a valid message."""
+    lines = _make_streaming_tool_response("shell_run", {"command": "ls -la"}, "call_abc")
+    with patch.object(agent._http_client, "stream", return_value=_mock_stream(lines)):
+        msg, finish = _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                                   {"model": "test", "messages": [], "tools": []}, step_callback=None)
+
+    assert finish == "tool_calls"
+    assert msg["tool_calls"] is not None
+    assert len(msg["tool_calls"]) == 1
+    tc = msg["tool_calls"][0]
+    assert tc["id"] == "call_abc"
+    assert tc["function"]["name"] == "shell_run"
+    parsed = _json_mod.loads(tc["function"]["arguments"])
+    assert parsed["command"] == "ls -la"
+
+
+def test_stream_call_skips_role_only_chunks(agent):
+    """_stream_call must ignore role-only opener chunks when detecting branch."""
+    lines = [
+        'data: {"choices": [{"delta": {"role": "assistant"}, "finish_reason": null}]}',
+        *_make_streaming_tool_response("shell_run", {"command": "pwd"}, "call_x"),
+    ]
+    with patch.object(agent._http_client, "stream", return_value=_mock_stream(lines)):
+        msg, finish = _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                                   {"model": "test", "messages": [], "tools": []}, step_callback=None)
+    assert msg["tool_calls"] is not None
+    assert msg["tool_calls"][0]["function"]["name"] == "shell_run"
+
+
+def test_stream_call_falls_back_to_non_streaming_on_parse_error(agent):
+    """If streaming raises a non-httpx error (e.g. ValueError), _stream_call retries with stream=False."""
+    non_streaming_resp = MagicMock()
+    non_streaming_resp.raise_for_status = MagicMock()
+    non_streaming_resp.json.return_value = {
+        "choices": [{"message": {"role": "assistant", "content": "fallback answer", "tool_calls": None},
+                     "finish_reason": "stop"}]
+    }
+    with patch.object(agent._http_client, "stream", side_effect=ValueError("unexpected stream format")):
+        with patch.object(agent._http_client, "post", return_value=non_streaming_resp):
+            msg, finish = _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                                       {"model": "test", "messages": [], "tools": []}, step_callback=None)
+    assert msg["content"] == "fallback answer"
+    assert finish == "stop"
+
+
+def test_stream_call_reraises_httpx_timeout(agent):
+    """httpx.TimeoutException from streaming must propagate up, not fall back to non-streaming."""
+    import httpx
+    with patch.object(agent._http_client, "stream", side_effect=httpx.ReadTimeout("timed out")):
+        with pytest.raises(httpx.TimeoutException):
+            _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                         {"model": "test", "messages": [], "tools": []}, step_callback=None)
+
+
+def test_run_fires_token_events_for_text_response(agent):
+    """When Ollama streams a text answer, run() must forward token events via step_callback."""
+    text = "Your system has 64GB RAM."
+    lines = _make_streaming_text_response(text)
+
+    events = []
+    with patch.object(agent._http_client, "stream", return_value=_mock_stream(lines)):
+        agent.run("what are my specs", step_callback=lambda e: events.append(e))
+
+    token_events = [e for e in events if e.get("type") == "token"]
+    assert len(token_events) > 0, "Expected token events, got none"
+    assembled = "".join(e["text"] for e in token_events)
+    assert assembled == text
+
+
+def test_run_no_spurious_token_events_during_tool_call_round(agent):
+    """Tool call rounds must not emit token events — only step events for that round."""
+    tool_lines = _make_streaming_tool_response("shell_run", {"command": "ls"}, "call_1")
+    stop_lines = _make_streaming_text_response("Done.")
+
+    events = []
+    call_count = [0]
+
+    def fake_stream(method, url, json=None, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return _mock_stream(tool_lines)
+        return _mock_stream(stop_lines)
+
+    with patch.object(agent._http_client, "stream", side_effect=fake_stream):
+        with patch("ollama_agent.execute_tool", return_value="file list"):
+            agent.run("list files", step_callback=lambda e: events.append(e))
+
+    # Verify zero tokens emitted during the tool call round (before first step event)
+    first_step_idx = next((i for i, e in enumerate(events) if e.get("type") == "step"), len(events))
+    pre_step_tokens = [e for e in events[:first_step_idx] if e.get("type") == "token"]
+    assert pre_step_tokens == [], f"Tool call round emitted spurious tokens: {pre_step_tokens}"
+
+    # All token events should come from the final text round only (not the tool call round)
+    token_events = [e for e in events if e.get("type") == "token"]
+    assert len(token_events) > 0, "Expected token events from final text response"
+    assembled = "".join(e["text"] for e in token_events)
+    assert assembled == "Done."
+    # Also verify there was at least one step event (from the tool call)
+    step_events = [e for e in events if e.get("type") == "step"]
+    assert len(step_events) >= 1
+
+
 def test_coding_agent_passed_to_execute_tool(agent):
     """execute_tool should be called with the coding agent instance."""
     coding_response = _tool_response("coding_ask", {"question": "What is agent.py?", "cwd": "/p"})
