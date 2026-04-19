@@ -90,6 +90,93 @@ _FINALIZE_TOOL = {
 _OLLAMA_TOOLS = _anthropic_to_ollama_tools(_OLLAMA_SAFE_TOOL_DEFINITIONS) + [_FINALIZE_TOOL]
 
 
+def _stream_call(client: "httpx.Client", url: str, payload: dict,
+                 step_callback) -> tuple[dict, str | None]:
+    """Make a streaming LLM call. Returns (msg, finish_reason) in same shape as non-streaming.
+
+    Branches on first meaningful chunk:
+    - tool_calls: accumulate fragments silently, no visual output
+    - content: fire step_callback({"type": "token", "text": token}) for each token
+
+    Falls back to non-streaming POST on any exception.
+    """
+    try:
+        with client.stream("POST", url, json={**payload, "stream": True}) as resp:
+            resp.raise_for_status()
+            full_content = ""
+            accumulated: dict[int, dict] = {}  # index → {id, name, arguments}
+            finish_reason: str | None = None
+            is_text: bool | None = None  # None until first meaningful chunk
+
+            for line in resp.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                choice = chunk["choices"][0]
+                delta = choice.get("delta", {})
+                if choice.get("finish_reason"):
+                    finish_reason = choice["finish_reason"]
+
+                # Determine branch on first chunk that has content or tool_calls
+                if is_text is None:
+                    if delta.get("content"):
+                        is_text = True
+                    elif delta.get("tool_calls"):
+                        is_text = False
+
+                if is_text:
+                    token = delta.get("content", "")
+                    if token:
+                        full_content += token
+                        if step_callback:
+                            step_callback({"type": "token", "text": token})
+                elif is_text is False:
+                    for tc_delta in delta.get("tool_calls", []):
+                        idx = tc_delta.get("index", 0)
+                        if idx not in accumulated:
+                            accumulated[idx] = {"id": "", "name": "", "arguments": ""}
+                        if tc_delta.get("id"):
+                            accumulated[idx]["id"] = tc_delta["id"]
+                        func = tc_delta.get("function", {})
+                        if func.get("name"):
+                            accumulated[idx]["name"] += func["name"]
+                        if func.get("arguments"):
+                            accumulated[idx]["arguments"] += func["arguments"]
+
+        # Reconstruct msg in non-streaming shape
+        if accumulated:
+            tool_calls = [
+                {
+                    "id": accumulated[i]["id"],
+                    "type": "function",
+                    "function": {
+                        "name": accumulated[i]["name"],
+                        "arguments": accumulated[i]["arguments"],
+                    },
+                }
+                for i in sorted(accumulated)
+            ]
+            return {"role": "assistant", "content": full_content or "", "tool_calls": tool_calls}, finish_reason
+        else:
+            return {"role": "assistant", "content": full_content, "tool_calls": None}, finish_reason
+
+    except Exception:
+        # Fallback: non-streaming retry
+        fallback_payload = {k: v for k, v in payload.items() if k != "stream"}
+        resp = client.post(url, json=fallback_payload)
+        resp.raise_for_status()
+        data = resp.json()
+        choice = data["choices"][0]
+        return choice["message"], choice.get("finish_reason")
+
+
 class OllamaAgent:
     def __init__(self, config: dict, guardrails: Guardrails):
         self._config = config
@@ -165,15 +252,12 @@ class OllamaAgent:
             for step_idx in range(max_steps):
                 payload = {"model": self._model, "messages": messages, "tools": _OLLAMA_TOOLS}
 
-                resp = self._http_client.post(
+                msg, finish = _stream_call(
+                    self._http_client,
                     f"{self._host}/v1/chat/completions",
-                    json=payload,
+                    payload,
+                    step_callback,
                 )
-                resp.raise_for_status()
-                data = resp.json()
-                choice = data["choices"][0]
-                msg = choice["message"]
-                finish = choice["finish_reason"]
 
                 if finish == "stop" or not msg.get("tool_calls"):
                     text = _clean_ollama_text(msg.get("content") or "")

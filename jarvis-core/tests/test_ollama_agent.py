@@ -594,6 +594,94 @@ def test_non_milestone_step_event_has_correct_fields(agent):
     assert e["milestone"] is False
 
 
+from ollama_agent import _stream_call
+import json as _json_mod
+
+
+def _make_streaming_tool_response(tool_name: str, args: dict, call_id: str = "call_1"):
+    """Build list of SSE line strings simulating a streaming tool call response."""
+    args_str = _json_mod.dumps(args)
+    mid = len(args_str) // 2
+    lines = [
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"role": "assistant", "content": "", "tool_calls": [{"index": 0, "id": call_id, "type": "function", "function": {"name": tool_name, "arguments": ""}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": args_str[:mid]}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": args_str[mid:]}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})}',
+        "data: [DONE]",
+    ]
+    return lines
+
+
+def _make_streaming_text_response(text: str):
+    """Build list of SSE line strings simulating a streaming text response."""
+    lines = []
+    for char in text:
+        lines.append(f'data: {_json_mod.dumps({"choices": [{"delta": {"content": char}, "finish_reason": None}]})}')
+    lines.append(f'data: {_json_mod.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}]})}')
+    lines.append("data: [DONE]")
+    return lines
+
+
+def _mock_stream(lines):
+    """Return a mock context manager that yields the given SSE lines."""
+    mock_resp = MagicMock()
+    mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.iter_lines = MagicMock(return_value=iter(lines))
+    mock_ctx = MagicMock()
+    mock_ctx.__enter__ = MagicMock(return_value=mock_resp)
+    mock_ctx.__exit__ = MagicMock(return_value=False)
+    return mock_ctx
+
+
+def test_stream_call_accumulates_tool_call_fragments(agent):
+    """_stream_call must reassemble fragmented tool call arguments into a valid message."""
+    lines = _make_streaming_tool_response("shell_run", {"command": "ls -la"}, "call_abc")
+    with patch.object(agent._http_client, "stream", return_value=_mock_stream(lines)):
+        msg, finish = _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                                   {"model": "test", "messages": [], "tools": []}, step_callback=None)
+
+    assert finish == "tool_calls"
+    assert msg["tool_calls"] is not None
+    assert len(msg["tool_calls"]) == 1
+    tc = msg["tool_calls"][0]
+    assert tc["id"] == "call_abc"
+    assert tc["function"]["name"] == "shell_run"
+    parsed = _json_mod.loads(tc["function"]["arguments"])
+    assert parsed["command"] == "ls -la"
+
+
+def test_stream_call_skips_role_only_chunks(agent):
+    """_stream_call must ignore role-only opener chunks when detecting branch."""
+    lines = [
+        'data: {"choices": [{"delta": {"role": "assistant"}, "finish_reason": null}]}',
+        *_make_streaming_tool_response("shell_run", {"command": "pwd"}, "call_x"),
+    ]
+    with patch.object(agent._http_client, "stream", return_value=_mock_stream(lines)):
+        msg, finish = _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                                   {"model": "test", "messages": [], "tools": []}, step_callback=None)
+    assert msg["tool_calls"] is not None
+    assert msg["tool_calls"][0]["function"]["name"] == "shell_run"
+
+
+def test_stream_call_falls_back_to_non_streaming_on_error(agent):
+    """If streaming raises, _stream_call retries with stream=False and returns result."""
+    import httpx
+    non_streaming_resp = MagicMock()
+    non_streaming_resp.raise_for_status = MagicMock()
+    non_streaming_resp.json.return_value = {
+        "choices": [{"message": {"role": "assistant", "content": "fallback answer", "tool_calls": None},
+                     "finish_reason": "stop"}]
+    }
+    with patch.object(agent._http_client, "stream", side_effect=httpx.ReadTimeout("timed out")):
+        with patch.object(agent._http_client, "post", return_value=non_streaming_resp):
+            msg, finish = _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                                       {"model": "test", "messages": [], "tools": []}, step_callback=None)
+    assert msg["content"] == "fallback answer"
+    assert finish == "stop"
+
+
 def test_coding_agent_passed_to_execute_tool(agent):
     """execute_tool should be called with the coding agent instance."""
     coding_response = _tool_response("coding_ask", {"question": "What is agent.py?", "cwd": "/p"})
