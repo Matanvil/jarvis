@@ -174,6 +174,7 @@ class ApprovalRequest(BaseModel):
     approved: bool
     trust_session: bool = False
     category: str = ""
+    command_id: str = ""
 
 
 @app.get("/health")
@@ -241,7 +242,7 @@ async def command(req: CommandRequest):
                 None,
                 lambda: _pipeline.submit(
                     req.text, cwd=req.cwd, source=req.source,
-                    step_callback=dispatcher.on_step
+                    step_callback=dispatcher.on_step, command_id=command_id
                 )
             )
         except _anthropic.RateLimitError:
@@ -280,7 +281,7 @@ async def command(req: CommandRequest):
                     None,
                     lambda: _pipeline.submit(
                         req.text, cwd=req.cwd, source=req.source,
-                        step_callback=dispatcher.on_step
+                        step_callback=dispatcher.on_step, command_id=command_id
                     )
                 )
                 _log_command(req, start, result)
@@ -372,15 +373,35 @@ def cancel_command(command_id: str):
 
 
 @app.post("/approve")
-def approve(req: ApprovalRequest):
+async def approve(req: ApprovalRequest):
+    import approval_store
+    if not req.approved:
+        approval_store.discard(req.command_id)
+        return {"acknowledged": True, "next_action": "cancelled"}
+
     if req.trust_session and req.category and _guardrails:
         _guardrails.trust_for_session(req.category)
-    # Approval is stateless — the client must re-issue the original /command request.
-    # next_action tells the client what to do after this response.
-    return {
-        "acknowledged": True,
-        "next_action": "reissue_command" if req.approved else "cancelled",
-    }
+
+    # If we still hold the paused run, resume it in place (execute the approved tool
+    # and continue) instead of having the client replay the whole command. Falls back
+    # to reissue_command when there is no paused state (e.g. after a server restart).
+    if req.command_id and approval_store.has(req.command_id):
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(None, lambda: _pipeline.resume(req.command_id))
+        except Exception:
+            logging.getLogger("jarvis.errors").exception("Resume after approval failed")
+            approval_store.discard(req.command_id)
+            return {"acknowledged": True, "next_action": "reissue_command"}
+        finally:
+            if _guardrails:
+                _guardrails.clear_session_trusts()
+        if result is None or result.get("busy"):
+            return {"acknowledged": True, "next_action": "reissue_command"}
+        return {"acknowledged": True, "next_action": "resumed", **result}
+
+    # No paused state — client re-issues the original command (category now trusted).
+    return {"acknowledged": True, "next_action": "reissue_command"}
 
 
 class ClassifyRequest(BaseModel):

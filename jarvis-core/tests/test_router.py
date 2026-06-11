@@ -362,6 +362,27 @@ def test_default_routing_mode_is_local_first():
     assert DEFAULTS["ollama"]["routing_mode"] == "local_first"
 
 
+def test_resume_returns_none_when_no_paused_run(haiku_router):
+    import approval_store
+    approval_store.clear()
+    assert haiku_router.resume("nope") is None
+
+
+def test_resume_invokes_stored_resumer_and_annotates(haiku_router):
+    import approval_store
+    approval_store.clear()
+    approval_store.register(
+        "c1",
+        lambda step_callback=None: {"speak": "ok", "display": "ok", "steps": []},
+        {"user_text": "hi", "agent": "ollama", "model": "m1"},
+    )
+    result = haiku_router.resume("c1")
+    assert result["_agent"] == "ollama"
+    assert result["_model"] == "m1"
+    assert result["speak"] == "ok"
+    assert not approval_store.has("c1")  # popped
+
+
 def test_default_executor_model_is_qwen35_opus_jarvis():
     """Default ollama executor model should be qwen35-opus-jarvis."""
     from config import DEFAULTS

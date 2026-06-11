@@ -63,8 +63,11 @@ class CommandPipeline:
                     break
         self._registry[cmd.id] = cmd
 
-    def submit(self, text: str, cwd: str | None = None, source: str = "hotkey", step_callback=None) -> dict:
-        """Submit a command. Returns busy response if another command is executing."""
+    def submit(self, text: str, cwd: str | None = None, source: str = "hotkey",
+               step_callback=None, command_id: str | None = None) -> dict:
+        """Submit a command. Returns busy response if another command is executing.
+        command_id, when given, is the correlation id used to key a paused run so it
+        can be resumed after approval (see resume())."""
         if self._executing:
             return {"busy": True, "command_id": self._current_command_id}
 
@@ -91,7 +94,8 @@ class CommandPipeline:
 
         try:
             cmd.status = CommandStatus.ROUTING
-            result = self._router.process(text, cwd=cwd, memory_context=memory_context, source=source, step_callback=step_callback)
+            result = self._router.process(text, cwd=cwd, memory_context=memory_context, source=source,
+                                          step_callback=step_callback, command_id=command_id)
             cmd.status = CommandStatus.COMPLETED
             cmd.result = result
             cmd.completed_at = time.time()
@@ -100,6 +104,20 @@ class CommandPipeline:
             cmd.status = CommandStatus.FAILED
             cmd.completed_at = time.time()
             raise
+        finally:
+            self._executing = False
+            self._current_command_id = None
+
+    def resume(self, command_id: str, step_callback=None) -> dict | None:
+        """Continue a run paused for approval, under the single-command lock.
+        Returns the final result, None if there is no paused run (caller falls back
+        to replay), or a busy response if another command is executing."""
+        if self._executing:
+            return {"busy": True, "command_id": self._current_command_id}
+        self._executing = True
+        self._current_command_id = command_id
+        try:
+            return self._router.resume(command_id, step_callback=step_callback)
         finally:
             self._executing = False
             self._current_command_id = None

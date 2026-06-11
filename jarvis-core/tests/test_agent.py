@@ -125,6 +125,62 @@ def test_execute_tool_run_code_multi_language():
     mock_run.assert_called_once_with('console.log("hi")', "javascript", cwd=None)
 
 
+def test_resume_continues_without_replaying_prior_steps():
+    """A run paused for approval resumes by executing the approved tool and
+    continuing — it must NOT replay the safe steps that ran before the pause."""
+    import approval_store
+    from guardrails import Guardrails
+    approval_store.clear()
+
+    config = {
+        "anthropic_api_key": "sk-test",
+        "guardrails": {"run_shell": "auto_allow", "delete_files": "require_approval"},
+    }
+    guardrails = Guardrails(config)
+    agent = Agent(config=config, guardrails=guardrails)
+
+    def block(name, inp, bid):
+        b = MagicMock(); b.type = "tool_use"; b.name = name; b.input = inp; b.id = bid
+        return b
+
+    responses = []
+    # turn 1: safe ls (auto-allow) → executes
+    r1 = MagicMock(); r1.stop_reason = "tool_use"; r1.content = [block("shell_run", {"command": "ls /tmp"}, "t1")]
+    # turn 2: rm (delete_files → require_approval) → pause
+    r2 = MagicMock(); r2.stop_reason = "tool_use"; r2.content = [block("shell_run", {"command": "rm /tmp/foo"}, "t2")]
+    # turn 3 (only reached after resume): done
+    r3 = MagicMock(); r3.stop_reason = "end_turn"; tb = MagicMock(); tb.text = "Done.\nVOICE: Removed it."; r3.content = [tb]
+    responses = [r1, r2, r3]
+    create_calls = {"n": 0}
+
+    def fake_create(**kwargs):
+        i = create_calls["n"]; create_calls["n"] += 1
+        return responses[i]
+
+    shell = MagicMock(return_value={"exit_code": 0, "stdout": "", "stderr": "", "error": None})
+    with patch.object(agent._client.messages, "create", side_effect=fake_create), \
+         patch.object(agent._shell, "run", shell):
+        first = agent.run("clean up /tmp/foo", command_id="cmd1")
+        # Paused on the rm; only the ls has run so far.
+        assert "approval_required" in first
+        assert first["approval_required"]["category"] == "delete_files"
+        assert approval_store.has("cmd1")
+        assert shell.call_count == 1
+
+        # Approve: trust the category, then resume.
+        guardrails.trust_for_session("delete_files")
+        entry = approval_store.pop("cmd1")
+        assert entry is not None
+        assert entry["meta"]["agent"] == "claude"
+        final = entry["resume"]()
+
+    assert final["speak"] == "Removed it."
+    # ls + rm == 2 shell calls. If the run had replayed, ls would run twice (3 total).
+    assert shell.call_count == 2
+    # Exactly 3 model turns: the original two plus one after resume (no replay turns).
+    assert create_calls["n"] == 3
+
+
 def test_code_guardrail_category_detects_deletions():
     from tools._dispatch import _code_guardrail_category
     assert _code_guardrail_category("import shutil; shutil.rmtree('x')") == "delete_files"

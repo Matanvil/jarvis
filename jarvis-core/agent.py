@@ -2,7 +2,9 @@ import anthropic
 import json
 import logging
 import os
+from dataclasses import dataclass, field
 from datetime import datetime
+import approval_store
 from guardrails import Action, Decision, Guardrails
 from tools.shell import ShellTool
 from tools.web import WebTool
@@ -440,6 +442,27 @@ def _is_milestone(tool_name: str, step_index: int) -> bool:
     return False
 
 
+@dataclass
+class _ClaudeLoopState:
+    """Mutable state for one agent run. Carried across a pause/resume so an
+    approved run continues instead of replaying from the original command."""
+    messages: list
+    tool_calls_made: list
+    steps: list
+    total_steps: int
+    last_tool_call: object
+    system_prompt: str
+    cwd: str | None
+    source: str
+    ollama_available: bool
+    command_id: str | None
+    user_text: str
+    # Resume point — set only while paused mid-turn.
+    pending_content: list | None = None
+    pending_index: int = 0
+    pending_results: list | None = None
+
+
 class Agent:
     def __init__(self, config: dict, guardrails: Guardrails, local_agent=None,
                  model: str = "claude-haiku-4-5-20251001"):
@@ -478,148 +501,190 @@ class Agent:
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
             history: list | None = None, ollama_available: bool = True,
-            source: str = "", step_callback=None) -> dict:
+            source: str = "", step_callback=None, command_id: str | None = None) -> dict:
         """Run the agent loop. cwd sets the active project directory for all tool calls.
-        Returns dict with speak, display, and optional approval_required."""
-        messages = [*(history or []), {"role": "user", "content": user_text}]
-        tool_calls_made = []
-        steps = []
-        system_prompt = self._build_system_prompt(cwd, memory_context, source)
+        Returns dict with speak, display, and optional approval_required. When command_id
+        is given and the run pauses for approval, a resume callable is registered so the
+        run can continue (server-side) without replaying earlier steps."""
+        state = _ClaudeLoopState(
+            messages=[*(history or []), {"role": "user", "content": user_text}],
+            tool_calls_made=[],
+            steps=[],
+            total_steps=0,
+            last_tool_call=None,
+            system_prompt=self._build_system_prompt(cwd, memory_context, source),
+            cwd=cwd,
+            source=source,
+            ollama_available=ollama_available,
+            command_id=command_id,
+            user_text=user_text,
+        )
+        return self._outer_loop(state, step_callback)
 
+    def resume(self, state: "_ClaudeLoopState", step_callback=None) -> dict:
+        """Continue a run paused for approval: finish the paused turn (execute the
+        now-approved tool and any remaining blocks), then run the outer loop."""
+        content = state.pending_content
+        start_idx = state.pending_index
+        tool_results = state.pending_results or []
+        state.pending_content = None
+        paused = self._process_turn(state, content, start_idx, tool_results, step_callback)
+        if paused is not None:
+            return paused  # paused again on a later block in the same turn
+        return self._outer_loop(state, step_callback)
+
+    def _outer_loop(self, state: "_ClaudeLoopState", step_callback) -> dict:
         max_steps = self._config.get("reasoning", {}).get("max_steps_claude", 5)
         max_total = self._config.get("reasoning", {}).get("max_total_steps", 20)
-        stall_detection = self._config.get("reasoning", {}).get("stall_detection", True)
-        total_steps = 0
-        last_tool_call = None  # (tool_name, frozenset(input.items())) for stall detection
 
         for _ in range(max_steps):
-            if total_steps >= max_total:
-                return {**format_response("I reached the maximum step limit.", tool_calls_made), "steps": steps}
+            if state.total_steps >= max_total:
+                return {**format_response("I reached the maximum step limit.", state.tool_calls_made), "steps": state.steps}
 
             # Omit delegate_to_local when Ollama is down to avoid wasting a step.
             # Omit notify for scheduled tasks — the scheduler fires the notification itself.
             available_tools = [
                 t for t in TOOL_DEFINITIONS
-                if (t["name"] != "delegate_to_local" or ollama_available)
-                and (t["name"] != "notify" or source != "scheduled")
+                if (t["name"] != "delegate_to_local" or state.ollama_available)
+                and (t["name"] != "notify" or state.source != "scheduled")
             ]
 
             response = self._client.messages.create(
                 model=self._model,
                 max_tokens=4096,
-                system=system_prompt,
+                system=state.system_prompt,
                 tools=available_tools,
-                messages=messages,
+                messages=state.messages,
             )
 
             if response.stop_reason in ("end_turn", "max_tokens"):
                 text = "".join(b.text for b in response.content if hasattr(b, "text"))
-                result = format_response(text, tool_calls_made)
-                result["steps"] = steps
+                result = format_response(text, state.tool_calls_made)
+                result["steps"] = state.steps
                 return result
 
-            messages.append({"role": "assistant", "content": response.content})
-            tool_results = []
-            stalled = False
+            state.messages.append({"role": "assistant", "content": response.content})
+            paused = self._process_turn(state, response.content, 0, [], step_callback)
+            if paused is not None:
+                return paused
 
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
+        return {**format_response("I ran out of steps. Please try again.", state.tool_calls_made), "steps": state.steps}
 
-                total_steps += 1
+    def _process_turn(self, state: "_ClaudeLoopState", content, start_idx: int,
+                      tool_results: list, step_callback) -> dict | None:
+        """Execute the tool_use blocks of one assistant turn from start_idx onward.
+        Returns an approval dict if it paused, else None (turn done, results appended).
+        On pause, all loop-state effects of the pending block are reverted so resume
+        re-processes it cleanly once the guardrail trusts the action."""
+        stall_detection = self._config.get("reasoning", {}).get("stall_detection", True)
+        stalled = False
 
-                # Stall detection: same tool + same input as the previous step. Once
-                # stalled, answer every remaining tool_use this turn with a warning
-                # tool_result instead of executing it. Leaving a tool_use unanswered
-                # would make the next messages.create() call invalid — the API requires
-                # every tool_use block to be paired with a tool_result.
-                if stall_detection and not stalled:
-                    try:
-                        current_call = (block.name, frozenset(block.input.items()))
-                    except TypeError:
-                        current_call = (block.name, block.name)
-                    if current_call == last_tool_call:
-                        stalled = True
-                    else:
-                        last_tool_call = current_call
+        for idx in range(start_idx, len(content)):
+            block = content[idx]
+            if block.type != "tool_use":
+                continue
 
-                if stalled:
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": "You already tried this exact action. Please try a different approach or conclude with what you know.",
-                    })
-                    continue
+            state.total_steps += 1
+            prev_last_tool_call = state.last_tool_call
 
-                step = {
-                    "tool": block.name,
-                    "input_summary": str(block.input)[:100],
-                    "milestone": _is_milestone(block.name, len(steps)),
-                    "result_summary": "",
-                }
-                steps.append(step)
-
-                if step_callback is not None:
-                    step_callback({
-                        "type": "step",
-                        "label": _step_label(block.name),
-                        "tool": block.name,
-                        "milestone": step["milestone"],
-                    })
-
+            # Stall detection: same tool + same input as the previous step. Once
+            # stalled, answer every remaining tool_use this turn with a warning
+            # tool_result instead of executing it (an unanswered tool_use is invalid).
+            if stall_detection and not stalled:
                 try:
-                    if block.name in SCHEDULE_TOOLS:
-                        if block.name == "create_schedule":
-                            if source == "scheduled":
-                                result = json.dumps({"error": "create_schedule is not allowed inside a scheduled task"})
-                            else:
-                                cron = block.input.get("cron")
-                                run_at = block.input.get("run_at_iso")
-                                timing = f"cron '{cron}'" if cron else f"at {run_at}"
-                                label = block.input.get("label", "")
-                                command = block.input.get("command", "")
-                                action = Action(
-                                    "schedule_create",
-                                    f"Schedule '{label}' to run '{command}' ({timing})",
-                                )
-                                if self._guardrails.classify(action) == Decision.REQUIRE_APPROVAL:
-                                    raise ApprovalRequiredError(
-                                        "create_schedule", action.description, "schedule_create"
-                                    )
-                                result = json.dumps(_handle_schedule_tool(block.name, block.input))
-                        else:
-                            result = json.dumps(_handle_schedule_tool(block.name, block.input))
-                    else:
-                        result = execute_tool(
-                            block.name, block.input,
-                            self._shell, self._web, self._code, self._macos,
-                            self._guardrails,
-                            default_cwd=cwd,
-                            local_agent=self._local_agent,
-                            coding=self._coding,
-                        )
-                    step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
-                    tool_calls_made.append(block.name)
-                    tool_results.append({
-                        "type": "tool_result",
+                    current_call = (block.name, frozenset(block.input.items()))
+                except TypeError:
+                    current_call = (block.name, block.name)
+                if current_call == state.last_tool_call:
+                    stalled = True
+                else:
+                    state.last_tool_call = current_call
+
+            if stalled:
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": "You already tried this exact action. Please try a different approach or conclude with what you know.",
+                })
+                continue
+
+            step = {
+                "tool": block.name,
+                "input_summary": str(block.input)[:100],
+                "milestone": _is_milestone(block.name, len(state.steps)),
+                "result_summary": "",
+            }
+            state.steps.append(step)
+
+            if step_callback is not None:
+                step_callback({
+                    "type": "step",
+                    "label": _step_label(block.name),
+                    "tool": block.name,
+                    "milestone": step["milestone"],
+                })
+
+            try:
+                if block.name in SCHEDULE_TOOLS:
+                    result = self._schedule_result(block, state.source)
+                else:
+                    result = execute_tool(
+                        block.name, block.input,
+                        self._shell, self._web, self._code, self._macos,
+                        self._guardrails,
+                        default_cwd=state.cwd,
+                        local_agent=self._local_agent,
+                        coding=self._coding,
+                    )
+                step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
+                state.tool_calls_made.append(block.name)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+            except ApprovalRequiredError as e:
+                # Revert this block's loop-state effects so resume re-processes it as
+                # a fresh call (executes once the guardrail trusts the category).
+                state.steps.pop()
+                state.total_steps -= 1
+                state.last_tool_call = prev_last_tool_call
+                state.pending_content = content
+                state.pending_index = idx
+                state.pending_results = tool_results
+                if state.command_id:
+                    approval_store.register(
+                        state.command_id,
+                        lambda step_callback=None, _s=state: self.resume(_s, step_callback),
+                        {"user_text": state.user_text, "agent": "claude", "model": self._model},
+                    )
+                return {
+                    "speak": None,
+                    "display": None,
+                    "approval_required": {
+                        "tool": e.tool_name,
+                        "description": e.description,
                         "tool_use_id": block.id,
-                        "content": result,
-                    })
-                except ApprovalRequiredError as e:
-                    step["result_summary"] = "approval_required"
-                    return {
-                        "speak": None,
-                        "display": None,
-                        "approval_required": {
-                            "tool": e.tool_name,
-                            "description": e.description,
-                            "tool_use_id": block.id,
-                            "category": e.category,
-                        },
-                        "steps": steps,
-                    }
+                        "category": e.category,
+                    },
+                    "steps": state.steps,
+                }
 
-            if tool_results:
-                messages.append({"role": "user", "content": tool_results})
+        state.messages.append({"role": "user", "content": tool_results})
+        return None
 
-        return {**format_response("I ran out of steps. Please try again.", tool_calls_made), "steps": steps}
+    def _schedule_result(self, block, source: str) -> str:
+        """Run a schedule tool, raising ApprovalRequiredError if create_schedule is gated."""
+        if block.name == "create_schedule":
+            if source == "scheduled":
+                return json.dumps({"error": "create_schedule is not allowed inside a scheduled task"})
+            cron = block.input.get("cron")
+            run_at = block.input.get("run_at_iso")
+            timing = f"cron '{cron}'" if cron else f"at {run_at}"
+            label = block.input.get("label", "")
+            command = block.input.get("command", "")
+            action = Action("schedule_create", f"Schedule '{label}' to run '{command}' ({timing})")
+            if self._guardrails.classify(action) == Decision.REQUIRE_APPROVAL:
+                raise ApprovalRequiredError("create_schedule", action.description, "schedule_create")
+            return json.dumps(_handle_schedule_tool(block.name, block.input))
+        return json.dumps(_handle_schedule_tool(block.name, block.input))

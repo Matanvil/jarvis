@@ -115,15 +115,24 @@ final class JarvisClient {
         return resp.commandId
     }
 
-    /// Returns true if caller should re-issue the original command.
-    func sendApproval(toolUseId: String, approved: Bool, category: String?) async throws -> Bool {
+    /// Outcome of an approval decision.
+    enum ApprovalOutcome {
+        case resumed(CommandResponse)   // server continued the run; render this result
+        case reissue                    // no paused state — replay the original command
+        case cancelled                  // denied or nothing to do
+    }
+
+    /// Submit an approval decision. On approval the server resumes the paused run in
+    /// place (no replay) and returns the final result; if it can't, it asks the client
+    /// to re-issue the original command.
+    func sendApproval(commandId: String, toolUseId: String, approved: Bool, category: String?) async throws -> ApprovalOutcome {
         var request = URLRequest(url: URL(string: "\(baseURL)/approve")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        var body: [String: Any] = ["tool_use_id": toolUseId, "approved": approved]
+        var body: [String: Any] = ["tool_use_id": toolUseId, "approved": approved, "command_id": commandId]
         if approved, let category {
-            // Trust this guardrail category for the rest of the session so the
-            // re-issued command auto-allows without triggering approval again.
+            // Trust this guardrail category for the rest of the session so the resumed
+            // (or re-issued) run auto-allows without triggering approval again.
             body["trust_session"] = true
             body["category"] = category
         }
@@ -131,7 +140,17 @@ final class JarvisClient {
         ServerAuth.apply(to: &request)
         let (data, _) = try await quickSession.data(for: request)
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        return (json?["next_action"] as? String) == "reissue_command"
+        switch json?["next_action"] as? String {
+        case "resumed":
+            if let response = try? JSONDecoder().decode(CommandResponse.self, from: data) {
+                return .resumed(response)
+            }
+            return .cancelled
+        case "reissue_command":
+            return .reissue
+        default:
+            return .cancelled
+        }
     }
 
     /// Returns true (approved), false (denied), or nil (unclear — caller should stay in approval state)
