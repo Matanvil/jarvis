@@ -297,8 +297,10 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     // MARK: - Config
 
     func refreshConfig() async {
-        guard let url = URL(string: "http://127.0.0.1:8765/config"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+        guard let url = URL(string: "http://127.0.0.1:8765/config") else { return }
+        var request = URLRequest(url: url)
+        ServerAuth.apply(to: &request)
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
               let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let narration = config["narration"] as? [String: Any]
         else { return }
@@ -312,6 +314,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         guard let url = URL(string: "http://127.0.0.1:8765/events/\(commandId)") else { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 600
+        ServerAuth.apply(to: &request)
 
         do {
             let (stream, _) = try await URLSession.shared.bytes(for: request)

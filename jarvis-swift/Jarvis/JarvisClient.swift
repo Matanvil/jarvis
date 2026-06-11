@@ -105,6 +105,7 @@ final class JarvisClient {
         var body: [String: Any] = ["text": text, "source": "swift"]
         if let cwd { body["cwd"] = cwd }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        ServerAuth.apply(to: &request)
         // Short timeout — server returns command_id immediately
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 10
@@ -127,6 +128,7 @@ final class JarvisClient {
             body["category"] = category
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        ServerAuth.apply(to: &request)
         let (data, _) = try await quickSession.data(for: request)
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         return (json?["next_action"] as? String) == "reissue_command"
@@ -138,6 +140,7 @@ final class JarvisClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["text": text])
+        ServerAuth.apply(to: &request)
         let (data, _) = try await quickSession.data(for: request)
         return try JSONDecoder().decode(ApprovalClassifyResponse.self, from: data).approved
     }

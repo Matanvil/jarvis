@@ -140,6 +140,23 @@ async def _deferred_bot_start():
 
 app = FastAPI(lifespan=lifespan)
 
+# Shared-secret auth between the Swift app and this local server. The Swift app
+# generates a token at launch and passes it to this process via JARVIS_AUTH_TOKEN,
+# then sends it as the X-Jarvis-Token header. Without this, any local process could
+# POST /command and get arbitrary shell execution. Enforced only when the token is
+# set — a manually-run dev server (or the test client) stays open.
+_AUTH_TOKEN = os.environ.get("JARVIS_AUTH_TOKEN", "")
+_AUTH_EXEMPT_PATHS = {"/health"}
+
+
+@app.middleware("http")
+async def _auth_middleware(request, call_next):
+    if _AUTH_TOKEN and request.url.path not in _AUTH_EXEMPT_PATHS:
+        if request.headers.get("X-Jarvis-Token") != _AUTH_TOKEN:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+    return await call_next(request)
+
 
 class CommandRequest(BaseModel):
     text: str

@@ -35,6 +35,29 @@ def test_health_endpoint(client_and_agent):
     assert response.json()["status"] == "ok"
 
 
+def test_auth_disabled_when_token_unset(client_and_agent, monkeypatch):
+    monkeypatch.setattr("server._AUTH_TOKEN", "")
+    client, _, _ = client_and_agent
+    assert client.post("/command", json={"text": "hi", "source": "telegram"}).status_code == 200
+
+
+def test_auth_rejects_missing_or_wrong_token(client_and_agent, monkeypatch):
+    monkeypatch.setattr("server._AUTH_TOKEN", "secret")
+    client, _, _ = client_and_agent
+    assert client.post("/command", json={"text": "hi", "source": "telegram"}).status_code == 401
+    assert client.post("/command", json={"text": "hi", "source": "telegram"},
+                       headers={"X-Jarvis-Token": "nope"}).status_code == 401
+
+
+def test_auth_accepts_valid_token_and_exempts_health(client_and_agent, monkeypatch):
+    monkeypatch.setattr("server._AUTH_TOKEN", "secret")
+    client, _, _ = client_and_agent
+    assert client.get("/health").status_code == 200  # exempt
+    ok = client.post("/command", json={"text": "hi", "source": "telegram"},
+                     headers={"X-Jarvis-Token": "secret"})
+    assert ok.status_code == 200
+
+
 def test_command_endpoint_returns_speak_and_display(client_and_agent):
     # Telegram (blocking path) returns speak/display in HTTP response.
     client, _, _ = client_and_agent
