@@ -63,8 +63,12 @@ Stored at `~/.jarvis/config.json`. Key fields:
   "brave_api_key": "",
   "ollama": {
     "host": "http://localhost:11434",
-    "model": "llama3.1:8b",
-    "routing_mode": "haiku_first"
+    "model": "qwen3.6:35b-a3b",
+    "routing_mode": "local_first",
+    "executor_host": "http://localhost:11434",
+    "executor_model": "qwen3.6:35b-a3b",
+    "classifier_host": "http://127.0.0.1:8090",
+    "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit"
   },
   "models": {
     "haiku": "claude-haiku-4-5-20251001",
@@ -79,7 +83,8 @@ Stored at `~/.jarvis/config.json`. Key fields:
 
 ## Routing Modes
 
-- `haiku_first` (default) — Ollama classifies intent, routes to Haiku or Sonnet
+- `local_first` (default) — local executor handles non-complex tasks, Sonnet reserved for `complex_reasoning`
+- `haiku_first` — Ollama classifies intent, routes to Haiku or Sonnet
 - `ollama_only` — local only, no Claude API calls
 - `claude_only` — always uses Claude, skips Ollama classifier
 

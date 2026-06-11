@@ -201,6 +201,54 @@ def test_command_logs_agent_analytics(client_and_agent):
     assert analytics_payload["agent_response_ms"] == 800
 
 
+def test_ensure_mlx_server_running_skips_when_executor_uses_ollama_host(client_and_agent):
+    import server as srv
+
+    cfg = {
+        "ollama": {
+            "routing_mode": "local_first",
+            "host": "http://localhost:11434",
+            "executor_host": "http://localhost:11434",
+            "executor_model": "qwen3.6:35b-a3b",
+        }
+    }
+    with patch("server.subprocess.Popen") as mock_popen:
+        srv._ensure_mlx_server_running(cfg)
+    mock_popen.assert_not_called()
+
+
+def test_approve_resumed_run_logs_analytics(client_and_agent):
+    import approval_store
+    import logger as logger_module
+
+    approval_store.clear()
+    client, _, _ = client_and_agent
+    approval_store.register(
+        "cmd-x",
+        lambda step_callback=None: {},
+        {"user_text": "delete temp file", "agent": "claude", "model": "m"},
+    )
+    with patch("server._pipeline") as mock_pipeline, \
+         patch.object(logger_module, "log_analytics") as mock_log_analytics:
+        mock_pipeline.resume.return_value = {
+            "speak": "done", "display": "done", "steps": [],
+            "_agent": "claude", "_model": "claude-sonnet-4-6",
+            "_escalated": False, "_escalation_reason": None, "_response_ms": 123,
+        }
+        resp = client.post("/approve", json={
+            "tool_use_id": "t", "approved": True, "command_id": "cmd-x",
+        })
+
+    assert resp.status_code == 200
+    assert resp.json()["next_action"] == "resumed"
+    mock_log_analytics.assert_called_once()
+    analytics_payload = mock_log_analytics.call_args.args[2]
+    assert analytics_payload["agent"] == "claude"
+    assert analytics_payload["model"] == "claude-sonnet-4-6"
+    assert analytics_payload["resumed"] is True
+    approval_store.clear()
+
+
 def test_command_response_includes_command_id(client_and_agent):
     # Hotkey (non-blocking) returns a server-generated command_id immediately.
     client, mock_router, _ = client_and_agent

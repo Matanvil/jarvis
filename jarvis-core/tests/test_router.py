@@ -383,10 +383,10 @@ def test_resume_invokes_stored_resumer_and_annotates(haiku_router):
     assert not approval_store.has("c1")  # popped
 
 
-def test_default_executor_model_is_qwen35_opus_jarvis():
-    """Default ollama executor model should be qwen35-opus-jarvis."""
+def test_default_base_ollama_model_is_qwen36():
+    """Default base Ollama model should align with the selected Qwen executor."""
     from config import DEFAULTS
-    assert DEFAULTS["ollama"]["model"] == "qwen35-opus-jarvis"
+    assert DEFAULTS["ollama"]["model"] == "qwen3.6:35b-a3b"
 
 
 def test_classifier_model_in_defaults():

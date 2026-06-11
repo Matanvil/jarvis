@@ -25,6 +25,11 @@ def has(command_id: str) -> bool:
     return command_id in _PAUSED
 
 
+def get(command_id: str) -> dict | None:
+    """Read a paused run entry without removing it."""
+    return _PAUSED.get(command_id)
+
+
 def pop(command_id: str) -> dict | None:
     return _PAUSED.pop(command_id, None)
 

@@ -4,9 +4,16 @@
   "hotkey": "ctrl+space",
   "ollama": {
     "host": "http://localhost:11434",
-    "model": "llama3.1:8b",
-    "routing_mode": "haiku_first",
-    "timeout_seconds": 30
+    "model": "qwen3.6:35b-a3b",
+    "routing_mode": "local_first",
+    "timeout_seconds": 300,
+    "executor_host": "http://localhost:11434",
+    "executor_model": "qwen3.6:35b-a3b",
+    "executor_chat_template_kwargs": {
+      "enable_thinking": false
+    },
+    "classifier_host": "http://127.0.0.1:8090",
+    "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit"
   },
   "models": {
     "haiku": "claude-haiku-4-5-20251001",

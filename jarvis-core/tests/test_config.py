@@ -70,7 +70,9 @@ def test_defaults_include_ollama_block(tmp_path, monkeypatch):
     cfg = config.load()
     assert "ollama" in cfg
     assert cfg["ollama"]["host"] == "http://localhost:11434"
-    assert cfg["ollama"]["model"] == "qwen35-opus-jarvis"
+    assert cfg["ollama"]["model"] == "qwen3.6:35b-a3b"
+    assert cfg["ollama"]["executor_host"] == "http://localhost:11434"
+    assert cfg["ollama"]["executor_model"] == "qwen3.6:35b-a3b"
     assert cfg["ollama"]["classifier_model"] == "mlx-community/Qwen3-4B-Instruct-2507-4bit"
     assert cfg["ollama"]["routing_mode"] == "local_first"
     assert cfg["ollama"]["timeout_seconds"] == 300

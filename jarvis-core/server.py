@@ -73,9 +73,12 @@ def _ensure_mlx_server_running(config: dict) -> None:
     ollama_cfg = config.get("ollama", {})
     if ollama_cfg.get("routing_mode") != "local_first":
         return
+    base_host = ollama_cfg.get("host", "http://localhost:11434")
     executor_host = ollama_cfg.get("executor_host", "")
     executor_model = ollama_cfg.get("executor_model", "")
     if not executor_host or not executor_model:
+        return
+    if executor_host == base_host:
         return
 
     try:
@@ -190,6 +193,11 @@ def reset_conversation():
 
 def _log_command(req: "CommandRequest", start: float, result: dict) -> None:
     """Log command analytics and training data."""
+    _log_command_result(req, start, result, resumed=False)
+
+
+def _log_command_result(req: "CommandRequest", start: float, result: dict, *, resumed: bool) -> None:
+    """Log command analytics and training data for both fresh and resumed runs."""
     duration_ms = int((time.time() - start) * 1000)
     if _loggers:
         _loggers["commands"].info(
@@ -201,6 +209,7 @@ def _log_command(req: "CommandRequest", start: float, result: dict) -> None:
             "has_approval_required": "approval_required" in result,
             "agent": result.get("_agent"),
             "model": result.get("_model"),
+            "resumed": resumed,
             "escalated": result.get("_escalated"),
             "escalation_reason": result.get("_escalation_reason"),
             "agent_response_ms": result.get("_response_ms"),
@@ -386,6 +395,9 @@ async def approve(req: ApprovalRequest):
     # and continue) instead of having the client replay the whole command. Falls back
     # to reissue_command when there is no paused state (e.g. after a server restart).
     if req.command_id and approval_store.has(req.command_id):
+        paused_entry = approval_store.get(req.command_id) or {}
+        paused_meta = paused_entry.get("meta", {})
+        start = time.time()
         loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(None, lambda: _pipeline.resume(req.command_id))
@@ -398,6 +410,12 @@ async def approve(req: ApprovalRequest):
                 _guardrails.clear_session_trusts()
         if result is None or result.get("busy"):
             return {"acknowledged": True, "next_action": "reissue_command"}
+        resume_req = CommandRequest(
+            text=paused_meta.get("user_text", ""),
+            cwd=paused_meta.get("cwd"),
+            source=paused_meta.get("source", "approval"),
+        )
+        _log_command_result(resume_req, start, result, resumed=True)
         return {"acknowledged": True, "next_action": "resumed", **result}
 
     # No paused state — client re-issues the original command (category now trusted).
