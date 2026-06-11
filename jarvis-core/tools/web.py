@@ -33,7 +33,7 @@ class WebTool:
         results = []
         for title_el in soup.select(".result__title")[:num_results]:
             link = title_el.find("a")
-            snippet_el = title_el.find_next(".result__snippet")
+            snippet_el = title_el.find_next(class_="result__snippet")
             results.append({
                 "title": link.get_text(strip=True) if link else "",
                 "url": link.get("href", "") if link else "",

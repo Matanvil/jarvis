@@ -140,6 +140,23 @@ async def _deferred_bot_start():
 
 app = FastAPI(lifespan=lifespan)
 
+# Shared-secret auth between the Swift app and this local server. The Swift app
+# generates a token at launch and passes it to this process via JARVIS_AUTH_TOKEN,
+# then sends it as the X-Jarvis-Token header. Without this, any local process could
+# POST /command and get arbitrary shell execution. Enforced only when the token is
+# set — a manually-run dev server (or the test client) stays open.
+_AUTH_TOKEN = os.environ.get("JARVIS_AUTH_TOKEN", "")
+_AUTH_EXEMPT_PATHS = {"/health"}
+
+
+@app.middleware("http")
+async def _auth_middleware(request, call_next):
+    if _AUTH_TOKEN and request.url.path not in _AUTH_EXEMPT_PATHS:
+        if request.headers.get("X-Jarvis-Token") != _AUTH_TOKEN:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+    return await call_next(request)
+
 
 class CommandRequest(BaseModel):
     text: str
@@ -157,6 +174,7 @@ class ApprovalRequest(BaseModel):
     approved: bool
     trust_session: bool = False
     category: str = ""
+    command_id: str = ""
 
 
 @app.get("/health")
@@ -224,7 +242,7 @@ async def command(req: CommandRequest):
                 None,
                 lambda: _pipeline.submit(
                     req.text, cwd=req.cwd, source=req.source,
-                    step_callback=dispatcher.on_step
+                    step_callback=dispatcher.on_step, command_id=command_id
                 )
             )
         except _anthropic.RateLimitError:
@@ -263,7 +281,7 @@ async def command(req: CommandRequest):
                     None,
                     lambda: _pipeline.submit(
                         req.text, cwd=req.cwd, source=req.source,
-                        step_callback=dispatcher.on_step
+                        step_callback=dispatcher.on_step, command_id=command_id
                     )
                 )
                 _log_command(req, start, result)
@@ -355,15 +373,35 @@ def cancel_command(command_id: str):
 
 
 @app.post("/approve")
-def approve(req: ApprovalRequest):
+async def approve(req: ApprovalRequest):
+    import approval_store
+    if not req.approved:
+        approval_store.discard(req.command_id)
+        return {"acknowledged": True, "next_action": "cancelled"}
+
     if req.trust_session and req.category and _guardrails:
         _guardrails.trust_for_session(req.category)
-    # Approval is stateless — the client must re-issue the original /command request.
-    # next_action tells the client what to do after this response.
-    return {
-        "acknowledged": True,
-        "next_action": "reissue_command" if req.approved else "cancelled",
-    }
+
+    # If we still hold the paused run, resume it in place (execute the approved tool
+    # and continue) instead of having the client replay the whole command. Falls back
+    # to reissue_command when there is no paused state (e.g. after a server restart).
+    if req.command_id and approval_store.has(req.command_id):
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(None, lambda: _pipeline.resume(req.command_id))
+        except Exception:
+            logging.getLogger("jarvis.errors").exception("Resume after approval failed")
+            approval_store.discard(req.command_id)
+            return {"acknowledged": True, "next_action": "reissue_command"}
+        finally:
+            if _guardrails:
+                _guardrails.clear_session_trusts()
+        if result is None or result.get("busy"):
+            return {"acknowledged": True, "next_action": "reissue_command"}
+        return {"acknowledged": True, "next_action": "resumed", **result}
+
+    # No paused state — client re-issues the original command (category now trusted).
+    return {"acknowledged": True, "next_action": "reissue_command"}
 
 
 class ClassifyRequest(BaseModel):
@@ -373,8 +411,7 @@ class ClassifyRequest(BaseModel):
 def _classify_approval(text: str) -> bool | None:
     """Ask Ollama to classify text as approve/deny/unclear. Returns True/False/None."""
     config = cfg_module.load()
-    host = config.get("ollama", {}).get("host", "http://localhost:11434")
-    model = config.get("ollama", {}).get("model", "mistral:latest")
+    host, model = cfg_module.classifier_backend(config)
     system = (
         'You are a binary classifier. Reply with JSON only — no explanation.\n'
         'If the text means YES / APPROVE / ALLOW, reply: {"approved": true}\n'

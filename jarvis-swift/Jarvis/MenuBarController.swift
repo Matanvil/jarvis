@@ -82,6 +82,7 @@ final class MenuBarController {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
+        ServerAuth.apply(to: &req)
         URLSession.shared.dataTask(with: req) { _, response, error in
             guard error == nil,
                   let http = response as? HTTPURLResponse,
@@ -96,6 +97,7 @@ final class MenuBarController {
         guard let url = URL(string: "http://127.0.0.1:8765/reset") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        ServerAuth.apply(to: &request)
         URLSession.shared.dataTask(with: request).resume()
         // Clear the Swift-side conversation thread and save the session
         DispatchQueue.main.async { [weak self] in
@@ -105,7 +107,9 @@ final class MenuBarController {
 
     func syncAwayState() {
         guard let url = URL(string: "http://127.0.0.1:8765/telegram/away") else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+        var request = URLRequest(url: url)
+        ServerAuth.apply(to: &request)
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
             guard let data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Bool],
                   let away = json["away"] else { return }

@@ -73,7 +73,9 @@ final class SettingsViewModel: ObservableObject {
         saveError = nil
         defer { isLoading = false }
         guard let url = URL(string: "\(baseURL)/config") else { return }
-        guard let (data, response) = try? await URLSession.shared.data(from: url),
+        var loadRequest = URLRequest(url: url)
+        ServerAuth.apply(to: &loadRequest)
+        guard let (data, response) = try? await URLSession.shared.data(for: loadRequest),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             saveError = "Could not load config — is Jarvis running?"
@@ -163,6 +165,7 @@ final class SettingsViewModel: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
+        ServerAuth.apply(to: &request)
 
         guard let (_, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else {

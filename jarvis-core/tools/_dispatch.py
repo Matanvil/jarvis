@@ -9,9 +9,25 @@ from tools._errors import ApprovalRequiredError
 # Shell commands that modify the filesystem (create/move/copy/permission changes)
 # These are routed to "modify_filesystem" (require_approval) instead of "run_shell" (auto_allow).
 _FS_MODIFY_RE = re.compile(r'\b(mkdir|touch|cp|mv|ln|chmod|chown|chgrp|rsync|install)\b')
-# rm/rmdir already map to delete_files via TOOL_TO_GUARDRAIL_CATEGORY for file tools,
-# but also catch them here for shell_run commands
-_FS_DELETE_RE = re.compile(r'\b(rm|rmdir)\b')
+# Destructive shell commands → "delete_files" (require_approval). Covers explicit
+# removal plus less-obvious destroyers: find -delete, git clean, shred, dd.
+_FS_DELETE_RE = re.compile(
+    r'\b(rm|rmdir|shred)\b'      # explicit removal
+    r'|\bfind\b.*-delete\b'      # find ... -delete
+    r'|\bgit\s+clean\b'          # git clean removes untracked files
+    r'|\bdd\b'                   # dd can overwrite disks/files
+)
+# run_code snippets that delete files. Gated like a destructive shell command so a
+# Python/JS snippet can't delete files under the auto-allowed run_code path while
+# shell "rm" requires approval. (File *writes* stay auto-allowed — parity with file_write.)
+_CODE_DELETE_RE = re.compile(
+    r'os\.(remove|unlink|rmdir|removedirs)\b'
+    r'|shutil\.rmtree\b'
+    r'|\.unlink\('                                          # Path(...).unlink()
+    r'|fs\.(unlink|rm|rmdir|rmSync|rmdirSync|unlinkSync)\b'  # node fs
+    r'|File\.(delete|unlink)\b|FileUtils\.rm\b'             # ruby
+    r'|\brm\s+-[rf]|\bshred\b'                              # shelling out from code
+)
 
 
 def _shell_guardrail_category(command: str) -> str:
@@ -21,6 +37,14 @@ def _shell_guardrail_category(command: str) -> str:
     if _FS_MODIFY_RE.search(command):
         return "modify_filesystem"
     return "run_shell"
+
+
+def _code_guardrail_category(code: str) -> str:
+    """Return the guardrail category for a run_code snippet. Deletion-capable code
+    is gated as delete_files; everything else is auto-allowed under run_code_with_effects."""
+    if _CODE_DELETE_RE.search(code):
+        return "delete_files"
+    return "run_code_with_effects"
 
 # Timeout for delegated Claude Code tasks (complex codebase work can take a while)
 _CLAUDE_CODE_TIMEOUT = 300
@@ -66,6 +90,8 @@ def execute_tool(
     """Dispatch a tool call. Raises ApprovalRequiredError if guardrails block it."""
     if tool_name == "shell_run":
         category = _shell_guardrail_category(tool_input.get("command", ""))
+    elif tool_name == "run_code":
+        category = _code_guardrail_category(tool_input.get("code", ""))
     else:
         category = TOOL_TO_GUARDRAIL_CATEGORY.get(tool_name, "run_shell")
     description = f"{tool_name}: {tool_input}"

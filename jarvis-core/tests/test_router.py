@@ -250,7 +250,7 @@ def test_haiku_first_uses_sonnet_for_complex_reasoning(haiku_router, mock_haiku_
     assert result["_model"] == "claude-sonnet-4-6"
 
 
-def test_haiku_first_is_default_routing_mode(config):
+def test_config_fixture_default_routing_mode_is_local_first(config):
     assert config["ollama"]["routing_mode"] == "local_first"
 
 
@@ -360,6 +360,27 @@ def test_default_routing_mode_is_local_first():
     """Default routing mode should be local_first."""
     from config import DEFAULTS
     assert DEFAULTS["ollama"]["routing_mode"] == "local_first"
+
+
+def test_resume_returns_none_when_no_paused_run(haiku_router):
+    import approval_store
+    approval_store.clear()
+    assert haiku_router.resume("nope") is None
+
+
+def test_resume_invokes_stored_resumer_and_annotates(haiku_router):
+    import approval_store
+    approval_store.clear()
+    approval_store.register(
+        "c1",
+        lambda step_callback=None: {"speak": "ok", "display": "ok", "steps": []},
+        {"user_text": "hi", "agent": "ollama", "model": "m1"},
+    )
+    result = haiku_router.resume("c1")
+    assert result["_agent"] == "ollama"
+    assert result["_model"] == "m1"
+    assert result["speak"] == "ok"
+    assert not approval_store.has("c1")  # popped
 
 
 def test_default_executor_model_is_qwen35_opus_jarvis():

@@ -35,6 +35,29 @@ def test_health_endpoint(client_and_agent):
     assert response.json()["status"] == "ok"
 
 
+def test_auth_disabled_when_token_unset(client_and_agent, monkeypatch):
+    monkeypatch.setattr("server._AUTH_TOKEN", "")
+    client, _, _ = client_and_agent
+    assert client.post("/command", json={"text": "hi", "source": "telegram"}).status_code == 200
+
+
+def test_auth_rejects_missing_or_wrong_token(client_and_agent, monkeypatch):
+    monkeypatch.setattr("server._AUTH_TOKEN", "secret")
+    client, _, _ = client_and_agent
+    assert client.post("/command", json={"text": "hi", "source": "telegram"}).status_code == 401
+    assert client.post("/command", json={"text": "hi", "source": "telegram"},
+                       headers={"X-Jarvis-Token": "nope"}).status_code == 401
+
+
+def test_auth_accepts_valid_token_and_exempts_health(client_and_agent, monkeypatch):
+    monkeypatch.setattr("server._AUTH_TOKEN", "secret")
+    client, _, _ = client_and_agent
+    assert client.get("/health").status_code == 200  # exempt
+    ok = client.post("/command", json={"text": "hi", "source": "telegram"},
+                     headers={"X-Jarvis-Token": "secret"})
+    assert ok.status_code == 200
+
+
 def test_command_endpoint_returns_speak_and_display(client_and_agent):
     # Telegram (blocking path) returns speak/display in HTTP response.
     client, _, _ = client_and_agent
@@ -49,14 +72,54 @@ def test_command_endpoint_calls_agent_with_cwd(client_and_agent):
     from unittest.mock import ANY
     client, mock_router, _ = client_and_agent
     client.post("/command", json={"text": "open safari", "cwd": "/my/project"})
-    mock_router.process.assert_called_once_with("open safari", cwd="/my/project", memory_context="", source="hotkey", step_callback=ANY)
+    mock_router.process.assert_called_once_with("open safari", cwd="/my/project", memory_context="", source="hotkey", step_callback=ANY, command_id=ANY)
 
 
 def test_command_endpoint_cwd_defaults_to_none(client_and_agent):
     from unittest.mock import ANY
     client, mock_router, _ = client_and_agent
     client.post("/command", json={"text": "hello"})
-    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey", step_callback=ANY)
+    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey", step_callback=ANY, command_id=ANY)
+
+
+def test_approve_resumes_paused_run(client_and_agent):
+    import approval_store
+    approval_store.clear()
+    client, mock_router, mock_guardrails = client_and_agent
+    approval_store.register("cmd-x", lambda step_callback=None: {},
+                            {"user_text": "x", "agent": "claude", "model": "m"})
+    mock_router.resume.return_value = {"speak": "done", "display": "done", "steps": []}
+    resp = client.post("/approve", json={
+        "tool_use_id": "t", "approved": True, "command_id": "cmd-x",
+        "trust_session": True, "category": "delete_files",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["next_action"] == "resumed"
+    assert data["speak"] == "done"
+    mock_guardrails.trust_for_session.assert_called_with("delete_files")
+    approval_store.clear()
+
+
+def test_approve_denied_discards_paused_run(client_and_agent):
+    import approval_store
+    approval_store.clear()
+    client, _, _ = client_and_agent
+    approval_store.register("cmd-y", lambda step_callback=None: {}, {})
+    resp = client.post("/approve", json={"tool_use_id": "t", "approved": False, "command_id": "cmd-y"})
+    assert resp.json()["next_action"] == "cancelled"
+    assert not approval_store.has("cmd-y")
+
+
+def test_approve_without_paused_state_falls_back_to_reissue(client_and_agent):
+    import approval_store
+    approval_store.clear()
+    client, _, _ = client_and_agent
+    resp = client.post("/approve", json={
+        "tool_use_id": "t", "approved": True, "command_id": "missing",
+        "trust_session": True, "category": "delete_files",
+    })
+    assert resp.json()["next_action"] == "reissue_command"
 
 
 def test_approve_endpoint_trusts_session(client_and_agent):
@@ -233,7 +296,7 @@ def test_empty_cwd_string_normalized_to_none(client_and_agent):
     from unittest.mock import ANY
     client, mock_router, _ = client_and_agent
     client.post("/command", json={"text": "hello", "cwd": ""})
-    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey", step_callback=ANY)
+    mock_router.process.assert_called_once_with("hello", cwd=None, memory_context="", source="hotkey", step_callback=ANY, command_id=ANY)
 
 
 def test_get_config_redacts_api_keys(client_and_agent, tmp_path):

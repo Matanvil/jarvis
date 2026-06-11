@@ -63,8 +63,11 @@ class CommandPipeline:
                     break
         self._registry[cmd.id] = cmd
 
-    def submit(self, text: str, cwd: str | None = None, source: str = "hotkey", step_callback=None) -> dict:
-        """Submit a command. Returns busy response if another command is executing."""
+    def submit(self, text: str, cwd: str | None = None, source: str = "hotkey",
+               step_callback=None, command_id: str | None = None) -> dict:
+        """Submit a command. Returns busy response if another command is executing.
+        command_id, when given, is the correlation id used to key a paused run so it
+        can be resumed after approval (see resume())."""
         if self._executing:
             return {"busy": True, "command_id": self._current_command_id}
 
@@ -78,21 +81,21 @@ class CommandPipeline:
         if self._memory and cwd:
             memory_context = self._memory.format_context(cwd)
             if not memory_context:
-                # Unknown project — trigger discovery (best-effort)
+                # Unknown project — trigger discovery (best-effort).
+                # Use the executor backend (capable local model), not the base host —
+                # discovery is an analysis task and must hit the server that's running.
                 try:
-                    ollama_cfg = self._router._config.get("ollama", {})
-                    self._memory.discover(
-                        cwd,
-                        ollama_host=ollama_cfg.get("host", "http://localhost:11434"),
-                        ollama_model=ollama_cfg.get("model", "mistral:latest"),
-                    )
+                    import config as cfg
+                    disc_host, disc_model = cfg.executor_backend(self._router._config)
+                    self._memory.discover(cwd, ollama_host=disc_host, ollama_model=disc_model)
                     memory_context = self._memory.format_context(cwd)
                 except Exception:
                     pass
 
         try:
             cmd.status = CommandStatus.ROUTING
-            result = self._router.process(text, cwd=cwd, memory_context=memory_context, source=source, step_callback=step_callback)
+            result = self._router.process(text, cwd=cwd, memory_context=memory_context, source=source,
+                                          step_callback=step_callback, command_id=command_id)
             cmd.status = CommandStatus.COMPLETED
             cmd.result = result
             cmd.completed_at = time.time()
@@ -101,6 +104,20 @@ class CommandPipeline:
             cmd.status = CommandStatus.FAILED
             cmd.completed_at = time.time()
             raise
+        finally:
+            self._executing = False
+            self._current_command_id = None
+
+    def resume(self, command_id: str, step_callback=None) -> dict | None:
+        """Continue a run paused for approval, under the single-command lock.
+        Returns the final result, None if there is no paused run (caller falls back
+        to replay), or a busy response if another command is executing."""
+        if self._executing:
+            return {"busy": True, "command_id": self._current_command_id}
+        self._executing = True
+        self._current_command_id = command_id
+        try:
+            return self._router.resume(command_id, step_callback=step_callback)
         finally:
             self._executing = False
             self._current_command_id = None

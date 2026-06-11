@@ -29,7 +29,6 @@ DEFAULTS = {
     "ollama": {
         "host": "http://localhost:11434",
         "model": "qwen35-opus-jarvis",
-        "classifier_model": "jarvis-classifier",
         "routing_mode": "local_first",   # local_first | haiku_first | ollama_first | claude_only | ollama_only
         "timeout_seconds": 300,
         "executor_host": "http://127.0.0.1:8090",
@@ -111,3 +110,35 @@ def save(cfg: dict) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_PATH, "w") as f:
         json.dump(cfg, f, indent=2)
+
+
+# ── Backend resolution ────────────────────────────────────────────────────────
+# Single source of truth for which (host, model) each local role talks to. Before
+# this, the executor used ollama.executor_*, the router classifier used
+# ollama.classifier_*, but approval-classify and project-memory discovery read the
+# base ollama.host/model — so they hit the wrong server when the executor/classifier
+# ran on a separate MLX endpoint. All call sites now resolve through these helpers.
+
+def executor_backend(config: dict) -> tuple[str, str]:
+    """(host, model) for the local executor model. Prefers explicit executor_* keys,
+    falls back to the base ollama host/model."""
+    o = config.get("ollama", {})
+    host = o.get("executor_host") or o.get("host") or "http://localhost:11434"
+    model = o.get("executor_model") or o.get("model") or "mistral:latest"
+    return host, model
+
+
+def classifier_backend(config: dict) -> tuple[str, str]:
+    """(host, model) for the intent / approval classifier."""
+    o = config.get("ollama", {})
+    host = o.get("classifier_host") or o.get("host") or "http://localhost:11434"
+    model = o.get("classifier_model") or o.get("model") or "mistral:latest"
+    return host, model
+
+
+def embedder_backend(config: dict) -> tuple[str, str]:
+    """(host, model) for embeddings (coding-agent semantic index)."""
+    o = config.get("ollama", {})
+    host = o.get("embedder_host") or o.get("host") or "http://localhost:11434"
+    model = o.get("embedder_model") or "nomic-embed-text"
+    return host, model

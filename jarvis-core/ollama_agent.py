@@ -1,7 +1,9 @@
 import json
 import os
 import re
+from dataclasses import dataclass, field
 import httpx
+import approval_store
 from guardrails import Guardrails
 from tools.shell import ShellTool
 from tools.web import WebTool
@@ -180,6 +182,25 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
         return choice["message"], choice.get("finish_reason")
 
 
+@dataclass
+class _OllamaLoopState:
+    """Mutable state for one Ollama run, carried across a pause/resume so an
+    approved run continues instead of replaying from the original command."""
+    messages: list
+    tool_calls_made: list
+    steps: list
+    max_steps: int
+    steps_used: int
+    last_tool_call: object
+    recent_tools: list
+    stall_detection: bool
+    cwd: str | None
+    command_id: str | None
+    user_text: str
+    pending_tool_calls: list | None = None
+    pending_index: int = 0
+
+
 class OllamaAgent:
     def __init__(self, config: dict, guardrails: Guardrails):
         self._config = config
@@ -208,13 +229,13 @@ class OllamaAgent:
 
     @property
     def _host(self) -> str:
-        ollama = self._config.get("ollama", {})
-        return ollama.get("executor_host") or ollama.get("host", "http://localhost:11434")
+        import config as cfg
+        return cfg.executor_backend(self._config)[0]
 
     @property
     def _model(self) -> str:
-        ollama = self._config.get("ollama", {})
-        return ollama.get("executor_model") or ollama.get("model", "mistral:latest")
+        import config as cfg
+        return cfg.executor_backend(self._config)[1]
 
     @property
     def _chat_template_kwargs(self) -> dict | None:
@@ -228,147 +249,81 @@ class OllamaAgent:
     def _timeout(self) -> float:
         return float(self._config.get("ollama", {}).get("timeout_seconds", 300))
 
+    _WINDOW = 5
+    _NEAR_DUP_THRESHOLD = 3     # same tool ≥ 3 times in window → redundant
+
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
             history: list | None = None, step_callback=None,
-            intent_class: str | None = None) -> dict:
+            intent_class: str | None = None, command_id: str | None = None) -> dict:
         """Run Ollama tool-use loop. Raises EscalateToCloud if Ollama can't handle it.
-        Returns same dict shape as Agent.run()."""
+        Returns same dict shape as Agent.run(). When command_id is given and the run
+        pauses for approval, a resume callable is registered so it can continue
+        server-side without replaying earlier steps."""
         system_msg = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~")) + _OLLAMA_EXTRA
         if cwd:
             system_msg += f"\nActive project directory: {cwd}\n"
         if memory_context:
             system_msg += f"\nProject memory: {memory_context}\n"
 
-        messages = [
-            {"role": "system", "content": system_msg},
-            *(history or []),
-            {"role": "user", "content": user_text},
-        ]
-        tool_calls_made = []
-        steps = []
         budgets = self._config.get("reasoning", {}).get("step_budgets", {})
         if intent_class and intent_class in budgets:
             max_steps = int(budgets[intent_class])
         else:
             max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 10))
-        stall_detection = self._config.get("reasoning", {}).get("stall_detection", True)
-        last_tool_call = None        # (tool_name, args_key) for exact stall detection
-        recent_tools: list = []      # sliding window of last 5 tool names for near-duplicate detection
-        _WINDOW = 5
-        _NEAR_DUP_THRESHOLD = 3     # same tool ≥ 3 times in window → redundant
 
+        state = _OllamaLoopState(
+            messages=[
+                {"role": "system", "content": system_msg},
+                *(history or []),
+                {"role": "user", "content": user_text},
+            ],
+            tool_calls_made=[],
+            steps=[],
+            max_steps=max_steps,
+            steps_used=0,
+            last_tool_call=None,
+            recent_tools=[],
+            stall_detection=self._config.get("reasoning", {}).get("stall_detection", True),
+            cwd=cwd,
+            command_id=command_id,
+            user_text=user_text,
+        )
+        return self._outer_loop(state, step_callback)
+
+    def resume(self, state: "_OllamaLoopState", step_callback=None) -> dict:
+        """Continue a run paused for approval: finish the paused tool batch (execute
+        the now-approved tool and any remaining calls), then run the outer loop."""
+        tool_calls = state.pending_tool_calls
+        start_idx = state.pending_index
+        state.pending_tool_calls = None
+        kind, result = self._process_tools(state, tool_calls, start_idx, step_callback)
+        if kind in ("final", "paused"):
+            return result
+        return self._outer_loop(state, step_callback)
+
+    def _outer_loop(self, state: "_OllamaLoopState", step_callback) -> dict:
+        url = f"{self._host}/v1/chat/completions"
         try:
-            for step_idx in range(max_steps):
-                payload = {"model": self._model, "messages": messages, "tools": _OLLAMA_TOOLS}
+            while state.steps_used < state.max_steps:
+                state.steps_used += 1
+                payload = {"model": self._model, "messages": state.messages, "tools": _OLLAMA_TOOLS}
                 if self._chat_template_kwargs:
                     payload["chat_template_kwargs"] = self._chat_template_kwargs
 
-                msg, finish = _stream_call(
-                    self._http_client,
-                    f"{self._host}/v1/chat/completions",
-                    payload,
-                    step_callback,
-                )
+                msg, finish = _stream_call(self._http_client, url, payload, step_callback)
 
                 if finish == "stop" or not msg.get("tool_calls"):
                     text = _clean_ollama_text(msg.get("content") or "")
-                    if not text and not tool_calls_made and finish != "stop":
+                    if not text and not state.tool_calls_made and finish != "stop":
                         raise EscalateToCloud("Empty response from local executor — server may have crashed")
-                    result = format_response(text, tool_calls_made)
-                    result["steps"] = steps
+                    result = format_response(text, state.tool_calls_made)
+                    result["steps"] = state.steps
                     return result
 
-                # Append assistant message with tool calls
-                messages.append(msg)
-
-                for tc in msg["tool_calls"]:
-                    name = tc["function"]["name"]
-                    call_id = tc["id"]
-                    try:
-                        args = json.loads(tc["function"]["arguments"])
-                    except json.JSONDecodeError as e:
-                        messages.append({"role": "tool", "tool_call_id": call_id,
-                                         "content": f"error: malformed tool arguments — {e}. Please retry with valid JSON."})
-                        continue
-
-                    # finalize: model signals it has enough info — return immediately
-                    if name == "finalize":
-                        answer = args.get("answer", "") if isinstance(args, dict) else ""
-                        step = {"tool": "finalize", "input_summary": answer[:100],
-                                "result_summary": "finalized", "milestone": len(steps) == 0}
-                        steps.append(step)
-                        result = format_response(answer, tool_calls_made)
-                        result["steps"] = steps
-                        return result
-
-                    # Near-duplicate detection: same tool dominates recent window → salvage
-                    recent_tools.append(name)
-                    if len(recent_tools) > _WINDOW:
-                        recent_tools.pop(0)
-                    if stall_detection and recent_tools.count(name) >= _NEAR_DUP_THRESHOLD and steps:
-                        messages.append({
-                            "role": "user",
-                            "content": f"You have called '{name}' {recent_tools.count(name)} times with similar inputs and similar results. Stop and respond with what you already know.",
-                        })
-                        try:
-                            nr = self._http_client.post(
-                                f"{self._host}/v1/chat/completions",
-                                json={"model": self._model, "messages": messages, "tool_choice": "none"},
-                            )
-                            nr.raise_for_status()
-                            nr_text = _clean_ollama_text(nr.json()["choices"][0]["message"].get("content") or "")
-                            if nr_text:
-                                result = format_response(nr_text, tool_calls_made)
-                                result["steps"] = steps
-                                return result
-                        except Exception:
-                            pass
-
-                    # Exact stall detection: same tool + same args twice in a row → break
-                    if stall_detection:
-                        try:
-                            current_call = (name, frozenset(args.items()) if isinstance(args, dict) else str(args))
-                        except TypeError:
-                            current_call = (name, str(args))
-                        if current_call == last_tool_call:
-                            messages.append({
-                                "role": "user",
-                                "content": "You already tried this exact action. Please try a different approach or conclude with what you know.",
-                            })
-                            # Force one more completion without tools to get a response
-                            resp2 = self._http_client.post(
-                                f"{self._host}/v1/chat/completions",
-                                json={"model": self._model, "messages": messages},
-                            )
-                            resp2.raise_for_status()
-                            text = _clean_ollama_text(resp2.json()["choices"][0]["message"].get("content") or "")
-                            result = format_response(text, tool_calls_made)
-                            result["steps"] = steps
-                            return result
-                        last_tool_call = current_call
-
-                    step = {"tool": name, "input_summary": str(args)[:100], "result_summary": "", "milestone": len(steps) == 0}
-                    steps.append(step)
-                    if step_callback is not None:
-                        step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
-                    try:
-                        result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=cwd, coding=self._coding)
-                        step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
-                        tool_calls_made.append(name)
-                    except ApprovalRequiredError as e:
-                        step["result_summary"] = "approval_required"
-                        return {
-                            "speak": None, "display": None,
-                            "approval_required": {
-                                "tool": e.tool_name,
-                                "description": e.description,
-                                "tool_use_id": call_id,
-                                "category": e.category,
-                            },
-                            "steps": steps,
-                        }
-
-                    messages.append({"role": "tool", "tool_call_id": call_id, "content": result})
+                state.messages.append(msg)
+                kind, result = self._process_tools(state, msg["tool_calls"], 0, step_callback)
+                if kind in ("final", "paused"):
+                    return result
 
         except httpx.ConnectError as e:
             raise EscalateToCloud(f"Ollama unavailable: {e}")
@@ -380,20 +335,131 @@ class OllamaAgent:
         # Salvage: one final no-tools call to emit whatever the model gathered
         try:
             salvage_resp = self._http_client.post(
-                f"{self._host}/v1/chat/completions",
-                json={"model": self._model, "messages": messages, "tool_choice": "none"},
+                url, json={"model": self._model, "messages": state.messages, "tool_choice": "none"},
             )
             salvage_resp.raise_for_status()
             salvage_text = _clean_ollama_text(
                 salvage_resp.json()["choices"][0]["message"].get("content") or ""
             )
             if salvage_text:
-                result = format_response(salvage_text, tool_calls_made)
-                result["steps"] = steps
+                result = format_response(salvage_text, state.tool_calls_made)
+                result["steps"] = state.steps
                 return result
         except Exception:
             pass
 
-        result = format_response("I ran out of steps. Please try again.", tool_calls_made)
-        result["steps"] = steps
+        result = format_response("I ran out of steps. Please try again.", state.tool_calls_made)
+        result["steps"] = state.steps
         return result
+
+    def _process_tools(self, state: "_OllamaLoopState", tool_calls: list, start_idx: int,
+                       step_callback) -> tuple[str, dict | None]:
+        """Process the tool calls of one assistant turn from start_idx. Returns
+        ("final", result) if it concluded, ("paused", approval) if it stopped for
+        approval, or ("continue", None) when the batch finished (continue the loop).
+        On pause, the pending call's loop-state effects are reverted so resume
+        re-processes it cleanly once the guardrail trusts the action."""
+        url = f"{self._host}/v1/chat/completions"
+        for j in range(start_idx, len(tool_calls)):
+            tc = tool_calls[j]
+            name = tc["function"]["name"]
+            call_id = tc["id"]
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except json.JSONDecodeError as e:
+                state.messages.append({"role": "tool", "tool_call_id": call_id,
+                                       "content": f"error: malformed tool arguments — {e}. Please retry with valid JSON."})
+                continue
+
+            # finalize: model signals it has enough info — return immediately
+            if name == "finalize":
+                answer = args.get("answer", "") if isinstance(args, dict) else ""
+                step = {"tool": "finalize", "input_summary": answer[:100],
+                        "result_summary": "finalized", "milestone": len(state.steps) == 0}
+                state.steps.append(step)
+                result = format_response(answer, state.tool_calls_made)
+                result["steps"] = state.steps
+                return ("final", result)
+
+            # Snapshot for clean revert if this call pauses for approval.
+            prev_last_tool_call = state.last_tool_call
+            recent_len = len(state.recent_tools)
+
+            # Near-duplicate detection: same tool dominates recent window → salvage
+            state.recent_tools.append(name)
+            if len(state.recent_tools) > self._WINDOW:
+                state.recent_tools.pop(0)
+            if state.stall_detection and state.recent_tools.count(name) >= self._NEAR_DUP_THRESHOLD and state.steps:
+                state.messages.append({
+                    "role": "user",
+                    "content": f"You have called '{name}' {state.recent_tools.count(name)} times with similar inputs and similar results. Stop and respond with what you already know.",
+                })
+                try:
+                    nr = self._http_client.post(
+                        url, json={"model": self._model, "messages": state.messages, "tool_choice": "none"},
+                    )
+                    nr.raise_for_status()
+                    nr_text = _clean_ollama_text(nr.json()["choices"][0]["message"].get("content") or "")
+                    if nr_text:
+                        result = format_response(nr_text, state.tool_calls_made)
+                        result["steps"] = state.steps
+                        return ("final", result)
+                except Exception:
+                    pass
+
+            # Exact stall detection: same tool + same args twice in a row → conclude
+            if state.stall_detection:
+                try:
+                    current_call = (name, frozenset(args.items()) if isinstance(args, dict) else str(args))
+                except TypeError:
+                    current_call = (name, str(args))
+                if current_call == state.last_tool_call:
+                    state.messages.append({
+                        "role": "user",
+                        "content": "You already tried this exact action. Please try a different approach or conclude with what you know.",
+                    })
+                    resp2 = self._http_client.post(
+                        url, json={"model": self._model, "messages": state.messages},
+                    )
+                    resp2.raise_for_status()
+                    text = _clean_ollama_text(resp2.json()["choices"][0]["message"].get("content") or "")
+                    result = format_response(text, state.tool_calls_made)
+                    result["steps"] = state.steps
+                    return ("final", result)
+                state.last_tool_call = current_call
+
+            step = {"tool": name, "input_summary": str(args)[:100], "result_summary": "", "milestone": len(state.steps) == 0}
+            state.steps.append(step)
+            if step_callback is not None:
+                step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
+            try:
+                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=self._coding)
+                step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
+                state.tool_calls_made.append(name)
+            except ApprovalRequiredError as e:
+                # Revert this call's loop-state effects so resume re-processes it cleanly.
+                state.steps.pop()
+                state.last_tool_call = prev_last_tool_call
+                del state.recent_tools[recent_len:]
+                state.pending_tool_calls = tool_calls
+                state.pending_index = j
+                if state.command_id:
+                    approval_store.register(
+                        state.command_id,
+                        lambda step_callback=None, _s=state: self.resume(_s, step_callback),
+                        {"user_text": state.user_text, "agent": "ollama", "model": self._model},
+                    )
+                return ("paused", {
+                    "speak": None, "display": None,
+                    "approval_required": {
+                        "tool": e.tool_name,
+                        "description": e.description,
+                        "tool_use_id": call_id,
+                        "category": e.category,
+                    },
+                    "steps": state.steps,
+                })
+
+            state.messages.append({"role": "tool", "tool_call_id": call_id, "content": result})
+
+        return ("continue", None)

@@ -7,41 +7,42 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		1A2B3C4D5E6F7A8B9C0D1E2F /* ArcReactorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B3C4D5E6F7A8B9C0D1E2F3A /* ArcReactorView.swift */; };
+		20D2689B00846AD289147615 /* ConversationTurn.swift in Sources */ = {isa = PBXBuildFile; fileRef = D722C25A1AB2A313C61C2A2F /* ConversationTurn.swift */; };
+		2A61E147BF98A57F2E45B368 /* ServerAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4F2E672EFF61B016C7F5B5B /* ServerAuth.swift */; };
+		38949C6A1B97F9254C8BF611 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DA8E26A20181D485520F5D /* SettingsView.swift */; };
 		4C532BB72DB8492A9CA01EFA /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFDE0C2B9C763CB14D4860EF /* MenuBarController.swift */; };
+		50B5984098E2CA321B052F50 /* ArcReactorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2A2306408B895EC1588A19 /* ArcReactorView.swift */; };
+		5B192FF0418EF35BCAB45133 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16DE1934410CC3348DF27C92 /* SettingsViewModel.swift */; };
 		5E25349CC3262A18DE554A01 /* JarvisApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD65447B9E4C38A85B4132FD /* JarvisApp.swift */; };
 		67C0FA63859E57CDAD3386B0 /* HUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 827BD974D1EDA53447ABD677 /* HUDView.swift */; };
+		73EB57CE388694AD14C8846D /* ConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28050F6CD9B2DCFF2B910307 /* ConversationStore.swift */; };
 		80196255C1F1E1FAD02CF1B6 /* HUDWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54CCBC142B08F40AAF2803FF /* HUDWindow.swift */; };
+		9A4605C19C8DED53DB7CFDA9 /* JarvisClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1782D973C548CA02194D931A /* JarvisClient.swift */; };
 		9DC43759D0969F2E2310C9B0 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF188A9690C132DC1EAA28DE /* AppDelegate.swift */; };
-		A1B2C3D4E5F6A7B8C9D0E1F2 /* JarvisClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F3 /* JarvisClient.swift */; };
-		B2C3D4E5F6A7B8C9D0E1F2A3 /* AudioController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A7B8C9D0E1F2A4 /* AudioController.swift */; };
+		C5A0B5A7794EDAD1DAD54D45 /* AudioController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE46948996AFC7C505BF9F2D /* AudioController.swift */; };
 		F661D252F7E4C5019639C9E1 /* HUDViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14F409752942B73285CEBFE /* HUDViewModel.swift */; };
-		C3D4E5F6A7B8C9D0E1F2A3B4 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D4E5F6A7B8C9D0E1F2A3B5 /* SettingsViewModel.swift */; };
-		C3D4E5F6A7B8C9D0E1F2A3C4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D4E5F6A7B8C9D0E1F2A3C5 /* SettingsView.swift */; };
-		C3D4E5F6A7B8C9D0E1F2A3D4 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D4E5F6A7B8C9D0E1F2A3D5 /* SettingsWindowController.swift */; };
-		1E1A626B793345D19ED17F69 /* ConversationTurn.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFF04372C9864500ACDE31DE /* ConversationTurn.swift */; };
-		5C34EDF9F93F4AF0A49348F0 /* ConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A6CB323FE3D41379FF699B3 /* ConversationStore.swift */; };
+		F7BADDC6504BE5C8CBDC71C7 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8280E667A550625C6F5B52C /* SettingsWindowController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		2B3C4D5E6F7A8B9C0D1E2F3A /* ArcReactorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArcReactorView.swift; sourceTree = "<group>"; };
+		16DE1934410CC3348DF27C92 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
+		1782D973C548CA02194D931A /* JarvisClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisClient.swift; sourceTree = "<group>"; };
+		28050F6CD9B2DCFF2B910307 /* ConversationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationStore.swift; sourceTree = "<group>"; };
 		54CCBC142B08F40AAF2803FF /* HUDWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDWindow.swift; sourceTree = "<group>"; };
 		827BD974D1EDA53447ABD677 /* HUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDView.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F6A7B8C9D0E1F3 /* JarvisClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisClient.swift; sourceTree = "<group>"; };
+		A1DA8E26A20181D485520F5D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		AF2A2306408B895EC1588A19 /* ArcReactorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArcReactorView.swift; sourceTree = "<group>"; };
 		AFDE0C2B9C763CB14D4860EF /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
-		B2C3D4E5F6A7B8C9D0E1F2A4 /* AudioController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioController.swift; sourceTree = "<group>"; };
 		B14F409752942B73285CEBFE /* HUDViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDViewModel.swift; sourceTree = "<group>"; };
-		DFF04372C9864500ACDE31DE /* ConversationTurn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationTurn.swift; sourceTree = "<group>"; };
-		2A6CB323FE3D41379FF699B3 /* ConversationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationStore.swift; sourceTree = "<group>"; };
-		C3D4E5F6A7B8C9D0E1F2A3B5 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
-		C3D4E5F6A7B8C9D0E1F2A3C5 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		C3D4E5F6A7B8C9D0E1F2A3D5 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
-		AA11BB22CC33DD44EE55FF66 /* Jarvis.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Jarvis.xcconfig; sourceTree = "<group>"; };
 		BCD242C83ADE5623EDB958B3 /* Jarvis.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Jarvis.entitlements; sourceTree = "<group>"; };
 		BD65447B9E4C38A85B4132FD /* JarvisApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisApp.swift; sourceTree = "<group>"; };
+		C8280E667A550625C6F5B52C /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		CF188A9690C132DC1EAA28DE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		D722C25A1AB2A313C61C2A2F /* ConversationTurn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationTurn.swift; sourceTree = "<group>"; };
 		D758DDA5F42A49B6CB275DED /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F2EA89B09E63D9954B6EA5A4 /* Jarvis.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Jarvis.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F4F2E672EFF61B016C7F5B5B /* ServerAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerAuth.swift; sourceTree = "<group>"; };
+		FE46948996AFC7C505BF9F2D /* AudioController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -56,7 +57,6 @@
 		BC0DCAC9B7584481D8C65021 = {
 			isa = PBXGroup;
 			children = (
-				AA11BB22CC33DD44EE55FF66 /* Jarvis.xcconfig */,
 				FC737B8F8A91C66ADA6702EE /* Jarvis */,
 				7370B301BC3824D8E135198C /* Products */,
 			);
@@ -65,22 +65,23 @@
 		FC737B8F8A91C66ADA6702EE /* Jarvis */ = {
 			isa = PBXGroup;
 			children = (
-				2B3C4D5E6F7A8B9C0D1E2F3A /* ArcReactorView.swift */,
 				CF188A9690C132DC1EAA28DE /* AppDelegate.swift */,
-				B2C3D4E5F6A7B8C9D0E1F2A4 /* AudioController.swift */,
-				2A6CB323FE3D41379FF699B3 /* ConversationStore.swift */,
-				DFF04372C9864500ACDE31DE /* ConversationTurn.swift */,
+				AF2A2306408B895EC1588A19 /* ArcReactorView.swift */,
+				FE46948996AFC7C505BF9F2D /* AudioController.swift */,
+				28050F6CD9B2DCFF2B910307 /* ConversationStore.swift */,
+				D722C25A1AB2A313C61C2A2F /* ConversationTurn.swift */,
 				827BD974D1EDA53447ABD677 /* HUDView.swift */,
 				B14F409752942B73285CEBFE /* HUDViewModel.swift */,
 				54CCBC142B08F40AAF2803FF /* HUDWindow.swift */,
 				D758DDA5F42A49B6CB275DED /* Info.plist */,
 				BCD242C83ADE5623EDB958B3 /* Jarvis.entitlements */,
 				BD65447B9E4C38A85B4132FD /* JarvisApp.swift */,
-				A1B2C3D4E5F6A7B8C9D0E1F3 /* JarvisClient.swift */,
+				1782D973C548CA02194D931A /* JarvisClient.swift */,
 				AFDE0C2B9C763CB14D4860EF /* MenuBarController.swift */,
-				C3D4E5F6A7B8C9D0E1F2A3B5 /* SettingsViewModel.swift */,
-				C3D4E5F6A7B8C9D0E1F2A3C5 /* SettingsView.swift */,
-			C3D4E5F6A7B8C9D0E1F2A3D5 /* SettingsWindowController.swift */,
+				F4F2E672EFF61B016C7F5B5B /* ServerAuth.swift */,
+				A1DA8E26A20181D485520F5D /* SettingsView.swift */,
+				16DE1934410CC3348DF27C92 /* SettingsViewModel.swift */,
+				C8280E667A550625C6F5B52C /* SettingsWindowController.swift */,
 			);
 			path = Jarvis;
 			sourceTree = "<group>";
@@ -115,6 +116,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					461D90920FCD8CAF83348871 = {
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -143,20 +145,21 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				1A2B3C4D5E6F7A8B9C0D1E2F /* ArcReactorView.swift in Sources */,
 				9DC43759D0969F2E2310C9B0 /* AppDelegate.swift in Sources */,
-				B2C3D4E5F6A7B8C9D0E1F2A3 /* AudioController.swift in Sources */,
+				50B5984098E2CA321B052F50 /* ArcReactorView.swift in Sources */,
+				C5A0B5A7794EDAD1DAD54D45 /* AudioController.swift in Sources */,
+				73EB57CE388694AD14C8846D /* ConversationStore.swift in Sources */,
+				20D2689B00846AD289147615 /* ConversationTurn.swift in Sources */,
 				67C0FA63859E57CDAD3386B0 /* HUDView.swift in Sources */,
 				F661D252F7E4C5019639C9E1 /* HUDViewModel.swift in Sources */,
 				80196255C1F1E1FAD02CF1B6 /* HUDWindow.swift in Sources */,
 				5E25349CC3262A18DE554A01 /* JarvisApp.swift in Sources */,
-				A1B2C3D4E5F6A7B8C9D0E1F2 /* JarvisClient.swift in Sources */,
+				9A4605C19C8DED53DB7CFDA9 /* JarvisClient.swift in Sources */,
 				4C532BB72DB8492A9CA01EFA /* MenuBarController.swift in Sources */,
-				C3D4E5F6A7B8C9D0E1F2A3B4 /* SettingsViewModel.swift in Sources */,
-				C3D4E5F6A7B8C9D0E1F2A3C4 /* SettingsView.swift in Sources */,
-			C3D4E5F6A7B8C9D0E1F2A3D4 /* SettingsWindowController.swift in Sources */,
-			1E1A626B793345D19ED17F69 /* ConversationTurn.swift in Sources */,
-			5C34EDF9F93F4AF0A49348F0 /* ConversationStore.swift in Sources */,
+				2A61E147BF98A57F2E45B368 /* ServerAuth.swift in Sources */,
+				38949C6A1B97F9254C8BF611 /* SettingsView.swift in Sources */,
+				5B192FF0418EF35BCAB45133 /* SettingsViewModel.swift in Sources */,
+				F7BADDC6504BE5C8CBDC71C7 /* SettingsWindowController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -165,12 +168,12 @@
 /* Begin XCBuildConfiguration section */
 		06169DA02795A8ED87F6F021 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AA11BB22CC33DD44EE55FF66 /* Jarvis.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Jarvis/Jarvis.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = Jarvis/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -248,12 +251,12 @@
 		};
 		B81D099211BB3784F907E95C /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AA11BB22CC33DD44EE55FF66 /* Jarvis.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Jarvis/Jarvis.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = Jarvis/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

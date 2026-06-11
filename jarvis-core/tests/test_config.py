@@ -5,6 +5,33 @@ from unittest.mock import patch
 import config
 
 
+def test_executor_backend_prefers_executor_keys():
+    cfg = {"ollama": {"host": "http://base:11434", "model": "base",
+                      "executor_host": "http://exec:8090", "executor_model": "exec-model"}}
+    assert config.executor_backend(cfg) == ("http://exec:8090", "exec-model")
+
+
+def test_executor_backend_falls_back_to_base():
+    cfg = {"ollama": {"host": "http://base:11434", "model": "base"}}
+    assert config.executor_backend(cfg) == ("http://base:11434", "base")
+
+
+def test_classifier_backend_prefers_classifier_keys():
+    cfg = {"ollama": {"host": "http://base:11434", "model": "base",
+                      "classifier_host": "http://cls:8090", "classifier_model": "cls-model"}}
+    assert config.classifier_backend(cfg) == ("http://cls:8090", "cls-model")
+
+
+def test_classifier_backend_falls_back_to_base():
+    cfg = {"ollama": {"host": "http://base:11434", "model": "base"}}
+    assert config.classifier_backend(cfg) == ("http://base:11434", "base")
+
+
+def test_embedder_backend_defaults_to_nomic():
+    cfg = {"ollama": {"host": "http://base:11434"}}
+    assert config.embedder_backend(cfg) == ("http://base:11434", "nomic-embed-text")
+
+
 def test_config_creates_default_file(tmp_path):
     config_path = tmp_path / "config.json"
     with patch("config.CONFIG_PATH", config_path):

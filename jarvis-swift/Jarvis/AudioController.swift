@@ -29,6 +29,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     private var isListening = false
     private var pendingToolUseId: String?
     private var pendingApprovalCategory: String?
+    private var currentCommandId: String?
     private var lastCommandText: String?
     private var stepVoiceEnabled: Bool = false
     private var lastInputWasText = false
@@ -251,12 +252,15 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         guard let toolUseId = pendingToolUseId else { return }
         let category = pendingApprovalCategory
         let originalCommand = lastCommandText
+        let commandId = currentCommandId ?? ""
         pendingToolUseId = nil
         pendingApprovalCategory = nil
 
         if !approved {
             viewModel.finalizeTurn(response: "Denied.")
             showHUD(.denied)
+            // Tell the server to drop the paused run; fire-and-forget.
+            Task { _ = try? await client.sendApproval(commandId: commandId, toolUseId: toolUseId, approved: false, category: nil) }
             Task {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 await MainActor.run { self.hideHUD() }
@@ -264,32 +268,41 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             return
         }
 
-        viewModel.finalizeTurn(response: "Approved — re-running…")
+        viewModel.finalizeTurn(response: "Approved…")
         showHUD(.thinking)
         Task { [weak self] in
             guard let self else { return }
-            let shouldReissue = (try? await client.sendApproval(
-                toolUseId: toolUseId, approved: true, category: category
-            )) ?? false
+            let outcome = (try? await client.sendApproval(
+                commandId: commandId, toolUseId: toolUseId, approved: true, category: category
+            )) ?? .cancelled
 
-            if shouldReissue, let text = originalCommand {
-                // Re-issue the original command — guardrails now trust the category for this session.
-                // lastInputWasText is intentionally inherited from the original command: a text-initiated
-                // command that triggers approval will re-issue silently (no TTS), a voice command will speak.
-                // Create a fresh turn for the re-issued command.
+            switch outcome {
+            case .resumed(let response):
+                // Server continued the run in place — render its final result (which may
+                // itself be another approval prompt if a later step is also gated).
+                await MainActor.run {
+                    self.viewModel.finalizeTurn(response: response.text)
+                    self.handleCommandResponse(response)
+                }
+            case .reissue:
+                // No paused state (e.g. server restarted) — replay the original command.
+                // lastInputWasText is inherited: a text-initiated command re-issues silently.
+                guard let text = originalCommand else { await MainActor.run { self.hideHUD() }; return }
                 await MainActor.run { self.viewModel.startTurn(command: text) }
                 do {
-                    let commandId = try await client.startCommand(text: text, cwd: nil)
-                    await self.listenToEvents(commandId: commandId)
+                    let newId = try await client.startCommand(text: text, cwd: nil)
+                    await self.listenToEvents(commandId: newId)
                 } catch {
                     NSLog("[Jarvis] re-issue after approval failed: %@", error.localizedDescription)
                     let msg = "I'm having trouble connecting. Please check that Jarvis is running."
-                    self.viewModel.finalizeTurn(response: msg)
-                    self.showHUD(.response(text: msg))
-                    self.speak(msg)
+                    await MainActor.run {
+                        self.viewModel.finalizeTurn(response: msg)
+                        self.showHUD(.response(text: msg))
+                        self.speak(msg)
+                    }
                 }
-            } else {
-                self.hideHUD()
+            case .cancelled:
+                await MainActor.run { self.hideHUD() }
             }
         }
     }
@@ -297,8 +310,10 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     // MARK: - Config
 
     func refreshConfig() async {
-        guard let url = URL(string: "http://127.0.0.1:8765/config"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+        guard let url = URL(string: "http://127.0.0.1:8765/config") else { return }
+        var request = URLRequest(url: url)
+        ServerAuth.apply(to: &request)
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
               let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let narration = config["narration"] as? [String: Any]
         else { return }
@@ -308,10 +323,12 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     // MARK: - SSE
 
     private func listenToEvents(commandId: String) async {
+        currentCommandId = commandId
         let stepVoice = stepVoiceEnabled
         guard let url = URL(string: "http://127.0.0.1:8765/events/\(commandId)") else { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 600
+        ServerAuth.apply(to: &request)
 
         do {
             let (stream, _) = try await URLSession.shared.bytes(for: request)

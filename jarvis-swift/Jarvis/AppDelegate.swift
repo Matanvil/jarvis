@@ -105,6 +105,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         guard let url = URL(string: "http://127.0.0.1:8765/alerts") else { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 300
+        ServerAuth.apply(to: &request)
         do {
             let (stream, _) = try await URLSession.shared.bytes(for: request)
             var buffer = ""
@@ -267,6 +268,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                     "--log-level", "warning",
                 ]
                 process.currentDirectoryURL = coreDir
+
+                // Pass the shared auth token so the core rejects requests from any
+                // other local process. Inherit the existing environment and add ours.
+                var env = ProcessInfo.processInfo.environment
+                env["JARVIS_AUTH_TOKEN"] = ServerAuth.token
+                process.environment = env
 
                 do {
                     try process.run()
