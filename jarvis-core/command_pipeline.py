@@ -78,14 +78,13 @@ class CommandPipeline:
         if self._memory and cwd:
             memory_context = self._memory.format_context(cwd)
             if not memory_context:
-                # Unknown project — trigger discovery (best-effort)
+                # Unknown project — trigger discovery (best-effort).
+                # Use the executor backend (capable local model), not the base host —
+                # discovery is an analysis task and must hit the server that's running.
                 try:
-                    ollama_cfg = self._router._config.get("ollama", {})
-                    self._memory.discover(
-                        cwd,
-                        ollama_host=ollama_cfg.get("host", "http://localhost:11434"),
-                        ollama_model=ollama_cfg.get("model", "mistral:latest"),
-                    )
+                    import config as cfg
+                    disc_host, disc_model = cfg.executor_backend(self._router._config)
+                    self._memory.discover(cwd, ollama_host=disc_host, ollama_model=disc_model)
                     memory_context = self._memory.format_context(cwd)
                 except Exception:
                     pass

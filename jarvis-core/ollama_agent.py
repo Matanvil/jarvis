@@ -208,13 +208,13 @@ class OllamaAgent:
 
     @property
     def _host(self) -> str:
-        ollama = self._config.get("ollama", {})
-        return ollama.get("executor_host") or ollama.get("host", "http://localhost:11434")
+        import config as cfg
+        return cfg.executor_backend(self._config)[0]
 
     @property
     def _model(self) -> str:
-        ollama = self._config.get("ollama", {})
-        return ollama.get("executor_model") or ollama.get("model", "mistral:latest")
+        import config as cfg
+        return cfg.executor_backend(self._config)[1]
 
     @property
     def _chat_template_kwargs(self) -> dict | None:

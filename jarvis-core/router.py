@@ -73,13 +73,13 @@ class Router:
 
     @property
     def _classifier_model(self) -> str:
-        ollama_cfg = self._config.get("ollama", {})
-        return ollama_cfg.get("classifier_model", ollama_cfg.get("model", "mistral:latest"))
+        import config as cfg
+        return cfg.classifier_backend(self._config)[1]
 
     @property
     def _classifier_host(self) -> str:
-        ollama_cfg = self._config.get("ollama", {})
-        return ollama_cfg.get("classifier_host") or ollama_cfg.get("host", "http://localhost:11434")
+        import config as cfg
+        return cfg.classifier_backend(self._config)[0]
 
     @property
     def _ollama_host(self) -> str:

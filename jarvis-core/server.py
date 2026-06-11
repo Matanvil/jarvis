@@ -373,8 +373,7 @@ class ClassifyRequest(BaseModel):
 def _classify_approval(text: str) -> bool | None:
     """Ask Ollama to classify text as approve/deny/unclear. Returns True/False/None."""
     config = cfg_module.load()
-    host = config.get("ollama", {}).get("host", "http://localhost:11434")
-    model = config.get("ollama", {}).get("model", "mistral:latest")
+    host, model = cfg_module.classifier_backend(config)
     system = (
         'You are a binary classifier. Reply with JSON only — no explanation.\n'
         'If the text means YES / APPROVE / ALLOW, reply: {"approved": true}\n'
