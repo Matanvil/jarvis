@@ -29,7 +29,6 @@ DEFAULTS = {
     "ollama": {
         "host": "http://localhost:11434",
         "model": "qwen35-opus-jarvis",
-        "classifier_model": "jarvis-classifier",
         "routing_mode": "local_first",   # local_first | haiku_first | ollama_first | claude_only | ollama_only
         "timeout_seconds": 300,
         "executor_host": "http://127.0.0.1:8090",

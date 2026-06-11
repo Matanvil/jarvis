@@ -250,7 +250,7 @@ def test_haiku_first_uses_sonnet_for_complex_reasoning(haiku_router, mock_haiku_
     assert result["_model"] == "claude-sonnet-4-6"
 
 
-def test_haiku_first_is_default_routing_mode(config):
+def test_config_fixture_default_routing_mode_is_local_first(config):
     assert config["ollama"]["routing_mode"] == "local_first"
 
 

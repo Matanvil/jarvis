@@ -19,6 +19,7 @@ def test_search_returns_results_with_content():
     assert len(results) > 0
     assert results[0]["title"] == "Example Title"
     assert results[0]["url"] == "https://example.com"
+    assert results[0]["snippet"] == "Example snippet text"
 
 
 def test_search_handles_network_error():

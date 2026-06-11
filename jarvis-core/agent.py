@@ -520,6 +520,7 @@ class Agent:
 
             messages.append({"role": "assistant", "content": response.content})
             tool_results = []
+            stalled = False
 
             for block in response.content:
                 if block.type != "tool_use":
@@ -527,19 +528,28 @@ class Agent:
 
                 total_steps += 1
 
-                # Stall detection: same tool + same input twice → inject warning
-                if stall_detection:
+                # Stall detection: same tool + same input as the previous step. Once
+                # stalled, answer every remaining tool_use this turn with a warning
+                # tool_result instead of executing it. Leaving a tool_use unanswered
+                # would make the next messages.create() call invalid — the API requires
+                # every tool_use block to be paired with a tool_result.
+                if stall_detection and not stalled:
                     try:
                         current_call = (block.name, frozenset(block.input.items()))
                     except TypeError:
                         current_call = (block.name, block.name)
                     if current_call == last_tool_call:
-                        messages.append({
-                            "role": "user",
-                            "content": "You already tried this exact action. Please try a different approach or conclude with what you know.",
-                        })
-                        break
-                    last_tool_call = current_call
+                        stalled = True
+                    else:
+                        last_tool_call = current_call
+
+                if stalled:
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": "You already tried this exact action. Please try a different approach or conclude with what you know.",
+                    })
+                    continue
 
                 step = {
                     "tool": block.name,

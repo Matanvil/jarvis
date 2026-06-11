@@ -125,6 +125,41 @@ def test_execute_tool_run_code_multi_language():
     mock_run.assert_called_once_with('console.log("hi")', "javascript", cwd=None)
 
 
+def test_code_guardrail_category_detects_deletions():
+    from tools._dispatch import _code_guardrail_category
+    assert _code_guardrail_category("import shutil; shutil.rmtree('x')") == "delete_files"
+    assert _code_guardrail_category("os.unlink('a')") == "delete_files"
+    assert _code_guardrail_category("fs.rmSync('a')") == "delete_files"
+    assert _code_guardrail_category("from pathlib import Path; Path('x').unlink()") == "delete_files"
+    assert _code_guardrail_category("print('hello')") == "run_code_with_effects"
+
+
+def test_shell_guardrail_category_extra_destructive():
+    from tools._dispatch import _shell_guardrail_category
+    assert _shell_guardrail_category("find . -name '*.log' -delete") == "delete_files"
+    assert _shell_guardrail_category("git clean -fd") == "delete_files"
+    assert _shell_guardrail_category("shred -u secret.txt") == "delete_files"
+    assert _shell_guardrail_category("ls -la") == "run_shell"
+
+
+def test_run_code_deletion_requires_approval():
+    """run_code that deletes files routes to delete_files (require_approval),
+    closing the gap where os.remove bypassed the gate that blocks shell 'rm'."""
+    from tools._errors import ApprovalRequiredError
+    agent = make_agent()
+    with pytest.raises(ApprovalRequiredError):
+        execute_tool("run_code", {"code": "import os; os.remove('/tmp/x')", "language": "python"},
+                     agent._shell, agent._web, agent._code, agent._macos, agent._guardrails, default_cwd=None)
+
+
+def test_run_code_pure_computation_auto_allowed():
+    agent = make_agent()
+    with patch.object(agent._code, "run_snippet", return_value={"exit_code": 0, "stdout": "4", "stderr": "", "error": None}):
+        result = execute_tool("run_code", {"code": "print(2+2)", "language": "python"},
+                              agent._shell, agent._web, agent._code, agent._macos, agent._guardrails, default_cwd=None)
+    assert "stdout=4" in result
+
+
 def test_approval_required_returns_structured_response():
     agent = make_agent()
     mock_block = MagicMock()
@@ -270,14 +305,41 @@ def test_stall_detection_injects_warning(tmp_path, monkeypatch):
          patch("tools._dispatch.execute_tool", return_value="exit_code=0\nstdout=tmp\nstderr="):
         agent.run("do something")
 
-    # Check that a stall warning was injected somewhere in the messages
+    # The stall warning is delivered as a tool_result (so the tool_use/tool_result
+    # pairing stays valid for the Anthropic API), not as a bare user text message.
     all_messages = [msg for call in call_log for msg in call]
-    stall_msg = next(
-        (m for m in all_messages
-         if isinstance(m.get("content"), str) and "already tried" in m["content"].lower()),
-        None
+    warning_found = any(
+        isinstance(m.get("content"), list)
+        and any(
+            isinstance(b, dict)
+            and b.get("type") == "tool_result"
+            and "already tried" in str(b.get("content", "")).lower()
+            for b in m["content"]
+        )
+        for m in all_messages
     )
-    assert stall_msg is not None
+    assert warning_found, "stall warning should be delivered via a tool_result"
+
+    # API invariant: every assistant tool_use must be answered by a tool_result in the
+    # immediately following user message — an unanswered tool_use 400s the next call.
+    for messages in call_log:
+        for i, m in enumerate(messages):
+            content = m.get("content")
+            if m.get("role") != "assistant" or not isinstance(content, list):
+                continue
+            tool_use_ids = [getattr(b, "id", None) for b in content
+                            if getattr(b, "type", None) == "tool_use"]
+            if not tool_use_ids:
+                continue
+            assert i + 1 < len(messages), "tool_use not followed by any message"
+            nxt = messages[i + 1]
+            assert nxt.get("role") == "user"
+            results = nxt.get("content")
+            assert isinstance(results, list)
+            result_ids = [r.get("tool_use_id") for r in results
+                          if isinstance(r, dict) and r.get("type") == "tool_result"]
+            for tid in tool_use_ids:
+                assert tid in result_ids, f"tool_use {tid} has no tool_result"
 
 
 def test_run_returns_steps_list(tmp_path, monkeypatch):
