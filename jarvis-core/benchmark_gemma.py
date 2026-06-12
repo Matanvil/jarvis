@@ -328,6 +328,7 @@ def run_benchmark(
     num_ctx: int,
     cases: list[tuple[str, str, str, str]],
     chat_template_kwargs: Optional[dict] = None,
+    rapid_mlx: bool = False,
 ) -> Result:
     result = Result(model=model, num_ctx=num_ctx, total=len(cases))
     width = max(len(c[0]) for c in cases)
@@ -343,9 +344,11 @@ def run_benchmark(
                         {"role": "user", "content": command},
                     ],
                     "tools": TOOLS,
-                    "options": {"num_ctx": num_ctx},
                 }
-                if chat_template_kwargs is not None:
+                if not rapid_mlx:
+                    # Ollama-specific context window option
+                    payload["options"] = {"num_ctx": num_ctx}
+                if not rapid_mlx and chat_template_kwargs is not None:
                     payload["chat_template_kwargs"] = chat_template_kwargs
 
                 resp = client.post(
@@ -480,6 +483,10 @@ def main() -> None:
         help='Optional JSON passed as chat_template_kwargs, e.g. \'{"enable_thinking": false}\'',
     )
     parser.add_argument(
+        "--rapid-mlx", action="store_true",
+        help="Target a Rapid-MLX server: omit Ollama-specific options/chat_template_kwargs fields.",
+    )
+    parser.add_argument(
         "--output", default="",
         help="Optional path to save benchmark results JSON.",
     )
@@ -491,7 +498,7 @@ def main() -> None:
     results = []
     for model in models:
         print(f"\n{'=' * 60}")
-        print(f"Benchmarking: {model}  (num_ctx={args.num_ctx}, cases={len(cases)})")
+        print(f"Benchmarking: {model}  (num_ctx={args.num_ctx}, cases={len(cases)}, rapid_mlx={args.rapid_mlx})")
         print(f"{'=' * 60}")
         results.append(
             run_benchmark(
@@ -501,6 +508,7 @@ def main() -> None:
                 args.num_ctx,
                 cases,
                 chat_template_kwargs=chat_template_kwargs,
+                rapid_mlx=args.rapid_mlx,
             )
         )
 

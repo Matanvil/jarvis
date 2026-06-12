@@ -201,7 +201,7 @@ def test_command_logs_agent_analytics(client_and_agent):
     assert analytics_payload["agent_response_ms"] == 800
 
 
-def test_ensure_mlx_server_running_skips_when_executor_uses_ollama_host(client_and_agent):
+def test_ensure_executor_server_running_skips_when_executor_uses_ollama_host(client_and_agent):
     import server as srv
 
     cfg = {
@@ -213,7 +213,7 @@ def test_ensure_mlx_server_running_skips_when_executor_uses_ollama_host(client_a
         }
     }
     with patch("server.subprocess.Popen") as mock_popen:
-        srv._ensure_mlx_server_running(cfg)
+        srv._ensure_executor_server_running(cfg)
     mock_popen.assert_not_called()
 
 

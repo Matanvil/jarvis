@@ -31,8 +31,9 @@ DEFAULTS = {
         "model": "qwen3.6:35b-a3b",
         "routing_mode": "local_first",   # local_first | haiku_first | ollama_first | claude_only | ollama_only
         "timeout_seconds": 300,
-        "executor_host": "http://localhost:11434",
-        "executor_model": "qwen3.6:35b-a3b",
+        "executor_host": "http://127.0.0.1:8093",
+        "executor_model": "mlx-community/Qwen3.6-35B-A3B-4bit",
+        "executor_rapid_mlx": True,
         "executor_chat_template_kwargs": {"enable_thinking": False},
         "classifier_host": "http://127.0.0.1:8090",
         "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",

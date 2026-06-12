@@ -68,8 +68,9 @@ def _ensure_ollama_running() -> None:
     logging.info("[Jarvis] ollama serve started via %s", ollama_bin)
 
 
-def _ensure_mlx_server_running(config: dict) -> None:
-    """Start mlx_lm.server in the background if local_first mode is active and it isn't already running."""
+def _ensure_executor_server_running(config: dict) -> None:
+    """Start the executor inference server if local_first mode is active and it isn't already running.
+    Uses rapid-mlx when executor_rapid_mlx=True, mlx_lm.server otherwise."""
     ollama_cfg = config.get("ollama", {})
     if ollama_cfg.get("routing_mode") != "local_first":
         return
@@ -88,27 +89,40 @@ def _ensure_mlx_server_running(config: dict) -> None:
     except Exception:
         pass  # not running — start it
 
-    mlx_bin = (
-        shutil.which("mlx_lm.server")
-        or (p if (p := "/opt/homebrew/bin/mlx_lm.server") and os.path.exists(p) else None)
-    )
-    if not mlx_bin:
-        logging.warning("[Jarvis] mlx_lm.server binary not found — skipping auto-start")
-        return
-
     from urllib.parse import urlparse
     parsed = urlparse(executor_host)
-    port = parsed.port or 8090
+    port = parsed.port or 8093
 
-    chat_template_kwargs = ollama_cfg.get("executor_chat_template_kwargs", {})
-    chat_template_args = json.dumps(chat_template_kwargs) if chat_template_kwargs else None
-
-    cmd = [mlx_bin, "--model", executor_model, "--port", str(port)]
-    if chat_template_args:
-        cmd += ["--chat-template-args", chat_template_args]
-
-    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    logging.info("[Jarvis] mlx_lm.server started: model=%s port=%d", executor_model, port)
+    if ollama_cfg.get("executor_rapid_mlx"):
+        rapid_bin = (
+            shutil.which("rapid-mlx")
+            or (p if (p := "/opt/homebrew/bin/rapid-mlx") and os.path.exists(p) else None)
+        )
+        if not rapid_bin:
+            logging.warning("[Jarvis] rapid-mlx binary not found — skipping executor auto-start")
+            return
+        cmd = [
+            rapid_bin, "serve", executor_model,
+            "--port", str(port), "--host", "127.0.0.1",
+            "--enable-auto-tool-choice", "--tool-call-parser", "qwen3_coder_xml",
+        ]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logging.info("[Jarvis] rapid-mlx executor started: model=%s port=%d", executor_model, port)
+    else:
+        mlx_bin = (
+            shutil.which("mlx_lm.server")
+            or (p if (p := "/opt/homebrew/bin/mlx_lm.server") and os.path.exists(p) else None)
+        )
+        if not mlx_bin:
+            logging.warning("[Jarvis] mlx_lm.server binary not found — skipping executor auto-start")
+            return
+        chat_template_kwargs = ollama_cfg.get("executor_chat_template_kwargs", {})
+        chat_template_args = json.dumps(chat_template_kwargs) if chat_template_kwargs else None
+        cmd = [mlx_bin, "--model", executor_model, "--port", str(port)]
+        if chat_template_args:
+            cmd += ["--chat-template-args", chat_template_args]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logging.info("[Jarvis] mlx_lm.server executor started: model=%s port=%d", executor_model, port)
 
 
 def _ensure_classifier_server_running(config: dict) -> None:
@@ -157,7 +171,7 @@ async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
     config = cfg_module.load()
     _ensure_ollama_running()
-    _ensure_mlx_server_running(config)
+    _ensure_executor_server_running(config)
     _ensure_classifier_server_running(config)
     alert_bus.set_loop(asyncio.get_running_loop())
     _pipeline, _loggers, _guardrails, store = load_dependencies()
