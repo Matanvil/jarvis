@@ -34,6 +34,15 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     private var stepVoiceEnabled: Bool = false
     private var lastInputWasText = false
 
+    // MARK: - Jarvis vocabulary for contextual biasing
+    private static let jarvisVocabulary: [String] = [
+        "jarvis", "ollama", "qwen", "haiku", "sonnet", "claude", "anthropic",
+        "kubectl", "terraform", "homebrew", "xcodebuild",
+        "pytest", "uvicorn", "fastapi",
+        "shell run", "file write", "file read", "web search",
+        "delegate to local", "delegate to claude code",
+    ]
+
     // MARK: - Init
 
     init(
@@ -126,6 +135,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         guard let recognitionRequest else { return }
         recognitionRequest.shouldReportPartialResults = true
+        recognitionRequest.contextualStrings = Self.jarvisVocabulary
 
         let inputNode = audioEngine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
