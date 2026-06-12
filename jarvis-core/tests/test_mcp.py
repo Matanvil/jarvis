@@ -243,3 +243,108 @@ def test_guardrail_category_respects_config_override():
     servers = [_server_cfg("fs") | {"guardrail": "auto_allow"}]
     mgr = MCPManager(servers)
     assert mgr.guardrail_category("fs") == "auto_allow"
+
+
+# ---------------------------------------------------------------------------
+# gh_cli auth — _resolve_env
+# ---------------------------------------------------------------------------
+
+def test_resolve_env_no_auth_returns_merged_env():
+    from tools.mcp import MCPManager
+    mgr = MCPManager([])
+    cfg = {"env": {"FOO": "bar"}}
+    env = mgr._resolve_env(cfg)
+    assert env["FOO"] == "bar"
+    assert "GITHUB_PERSONAL_ACCESS_TOKEN" not in env
+
+
+def test_resolve_env_gh_cli_injects_token():
+    from tools.mcp import MCPManager
+    mgr = MCPManager([])
+    cfg = {"auth": "gh_cli", "env": {}}
+    with patch("tools.mcp.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="gho_testtoken\n")
+        env = mgr._resolve_env(cfg)
+    assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "gho_testtoken"
+
+
+def test_resolve_env_gh_cli_not_installed_raises():
+    from tools.mcp import MCPManager
+    import subprocess
+    mgr = MCPManager([])
+    cfg = {"auth": "gh_cli"}
+    with patch("tools.mcp.subprocess.run", side_effect=FileNotFoundError("gh not found")):
+        with pytest.raises(RuntimeError, match="gh CLI"):
+            mgr._resolve_env(cfg)
+
+
+def test_resolve_env_gh_cli_not_authenticated_raises():
+    from tools.mcp import MCPManager
+    mgr = MCPManager([])
+    cfg = {"auth": "gh_cli"}
+    with patch("tools.mcp.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=1, stdout="")
+        with pytest.raises(RuntimeError, match="not authenticated"):
+            mgr._resolve_env(cfg)
+
+
+# ---------------------------------------------------------------------------
+# connect_server — live add after startup
+# ---------------------------------------------------------------------------
+
+def test_connect_server_registers_tools():
+    from tools.mcp import MCPManager
+
+    mock_result = MagicMock()
+    mock_result.tools = [_make_mcp_tool("list_issues")]
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.list_tools = AsyncMock(return_value=mock_result)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    mock_read = MagicMock()
+    mock_write = MagicMock()
+    mock_transport = AsyncMock()
+    mock_transport.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
+    mock_transport.__aexit__ = AsyncMock(return_value=False)
+
+    mgr = MCPManager([])
+
+    with patch("tools.mcp.ClientSession", return_value=mock_session):
+        with patch("tools.mcp.stdio_client", return_value=mock_transport):
+            with patch.object(mgr, "_resolve_env", return_value={}):
+                asyncio.run(mgr._connect("gh", _server_cfg("gh")))
+
+    assert "mcp__gh__list_issues" in {s["name"] for s in mgr.tool_schemas()}
+
+
+def test_connect_server_public_method_adds_server():
+    from tools.mcp import MCPManager
+
+    mock_result = MagicMock()
+    mock_result.tools = [_make_mcp_tool("list_issues")]
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.list_tools = AsyncMock(return_value=mock_result)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    mock_read = MagicMock()
+    mock_write = MagicMock()
+    mock_transport = AsyncMock()
+    mock_transport.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
+    mock_transport.__aexit__ = AsyncMock(return_value=False)
+
+    mgr = MCPManager([])
+
+    cfg = _server_cfg("gh")
+    with patch("tools.mcp.ClientSession", return_value=mock_session):
+        with patch("tools.mcp.stdio_client", return_value=mock_transport):
+            with patch.object(mgr, "_resolve_env", return_value={}):
+                mgr.connect_server(cfg)
+
+    assert mgr.server_names() == ["gh"]
+    assert any(s["name"] == "mcp__gh__list_issues" for s in mgr.tool_schemas())

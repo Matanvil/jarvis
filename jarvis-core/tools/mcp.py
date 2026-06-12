@@ -1,8 +1,8 @@
 import asyncio
 import logging
 import os
+import subprocess
 import threading
-from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -75,9 +75,7 @@ class MCPManager:
         """Connect to all configured MCP servers in a background event loop thread."""
         if not self._configs:
             return
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
-        self._thread.start()
+        self._ensure_loop()
         for name, cfg in self._configs.items():
             try:
                 future = asyncio.run_coroutine_threadsafe(
@@ -87,6 +85,20 @@ class MCPManager:
             except Exception as exc:
                 _log.warning("[MCP] Failed to start server '%s': %s", name, exc)
 
+    def connect_server(self, cfg: dict) -> None:
+        """Add and connect a single server after startup. Idempotent by server name."""
+        name = cfg["name"]
+        self._configs[name] = cfg
+        self._ensure_loop()
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._connect(name, cfg), self._loop
+            )
+            future.result(timeout=30)
+        except Exception as exc:
+            _log.warning("[MCP] Failed to connect server '%s': %s", name, exc)
+            raise
+
     def stop_all(self) -> None:
         """Disconnect all sessions and clear state."""
         self._sessions.clear()
@@ -94,7 +106,33 @@ class MCPManager:
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
 
+    def _resolve_env(self, cfg: dict) -> dict:
+        """Build the env dict for a server, resolving auth helpers if needed."""
+        base = {**os.environ, **(cfg.get("env") or {})}
+        auth = cfg.get("auth")
+        if auth == "gh_cli":
+            try:
+                result = subprocess.run(
+                    ["gh", "auth", "token"],
+                    capture_output=True, text=True,
+                )
+            except FileNotFoundError:
+                raise RuntimeError("gh CLI is not installed. Install it with: brew install gh")
+            if result.returncode != 0 or not result.stdout.strip():
+                raise RuntimeError(
+                    "gh CLI is not authenticated. Run: gh auth login"
+                )
+            base["GITHUB_PERSONAL_ACCESS_TOKEN"] = result.stdout.strip()
+        return base
+
     # ── internal ─────────────────────────────────────────────────────────────
+
+    def _ensure_loop(self) -> None:
+        """Start the background event loop thread if it isn't running yet."""
+        if self._loop is None or not self._loop.is_running():
+            self._loop = asyncio.new_event_loop()
+            self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+            self._thread.start()
 
     def _inject_tools(self, server_name: str, mcp_tools: list) -> None:
         """Register discovered tools (called after successful connect or in tests)."""
@@ -113,8 +151,7 @@ class MCPManager:
             _log.warning("[MCP] Transport '%s' not yet supported for server '%s'", transport, name)
             return
 
-        env = cfg.get("env") or {}
-        merged_env = {**os.environ, **env}
+        merged_env = self._resolve_env(cfg)
 
         params = StdioServerParameters(
             command=cfg["command"],

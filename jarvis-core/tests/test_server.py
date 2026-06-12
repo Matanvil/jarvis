@@ -785,3 +785,91 @@ def test_load_dependencies_passes_mcp_manager_to_router(tmp_path, monkeypatch):
 
     srv.load_dependencies()
     assert isinstance(captured.get("mcp_manager"), MCPManager)
+
+
+# ── /connect/github endpoint ──────────────────────────────────────────────────
+
+@pytest.fixture
+def github_client(tmp_path, monkeypatch):
+    """TestClient with a clean config and a mock _pipeline/_guardrails."""
+    import config as cfg_module
+    import server as srv
+    monkeypatch.setattr(cfg_module, "CONFIG_PATH", tmp_path / "config.json")
+    (tmp_path / "config.json").write_text('{"mcp_servers": []}')
+
+    mock_pipeline = MagicMock(spec=CommandPipeline)
+    mock_pipeline.cancel = MagicMock()
+    srv._pipeline = mock_pipeline
+    srv._guardrails = MagicMock()
+    yield TestClient(srv.app)
+    srv._pipeline = None
+    srv._guardrails = None
+
+
+def test_github_status_gh_not_installed(github_client, monkeypatch):
+    import server as srv
+    monkeypatch.setattr(srv, "_gh_auth_status", lambda: {"installed": False, "authenticated": False, "user": None})
+    r = github_client.get("/connect/github")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["installed"] is False
+    assert data["authenticated"] is False
+
+
+def test_github_status_authenticated(github_client, monkeypatch):
+    import server as srv
+    monkeypatch.setattr(srv, "_gh_auth_status", lambda: {"installed": True, "authenticated": True, "user": "Matanvil"})
+    r = github_client.get("/connect/github")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["authenticated"] is True
+    assert data["user"] == "Matanvil"
+
+
+def test_github_connect_post_not_authenticated_returns_402(github_client, monkeypatch):
+    import server as srv
+    monkeypatch.setattr(srv, "_gh_auth_status", lambda: {"installed": True, "authenticated": False, "user": None})
+    r = github_client.post("/connect/github")
+    assert r.status_code == 402
+    assert "gh auth login" in r.json()["detail"]
+
+
+def test_github_connect_post_authenticated_writes_config_and_connects(github_client, monkeypatch, tmp_path):
+    import config as cfg_module
+    import server as srv
+    monkeypatch.setattr(srv, "_gh_auth_status", lambda: {"installed": True, "authenticated": True, "user": "Matanvil"})
+
+    connected = {}
+    mock_mgr = MagicMock()
+    mock_mgr.connect_server = MagicMock(side_effect=lambda cfg: connected.update({"cfg": cfg}))
+    srv._mcp_manager = mock_mgr
+
+    r = github_client.post("/connect/github")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["connected"] is True
+
+    cfg = cfg_module.load()
+    assert any(s["name"] == "github" for s in cfg["mcp_servers"])
+    assert connected["cfg"]["auth"] == "gh_cli"
+
+    srv._mcp_manager = None
+
+
+def test_github_connect_post_idempotent(github_client, monkeypatch, tmp_path):
+    """Calling POST /connect/github twice should not add duplicate entries."""
+    import config as cfg_module
+    import server as srv
+    monkeypatch.setattr(srv, "_gh_auth_status", lambda: {"installed": True, "authenticated": True, "user": "Matanvil"})
+    mock_mgr = MagicMock()
+    mock_mgr.connect_server = MagicMock()
+    srv._mcp_manager = mock_mgr
+
+    github_client.post("/connect/github")
+    github_client.post("/connect/github")
+
+    cfg = cfg_module.load()
+    github_entries = [s for s in cfg["mcp_servers"] if s["name"] == "github"]
+    assert len(github_entries) == 1
+
+    srv._mcp_manager = None

@@ -30,16 +30,18 @@ from step_dispatcher import StepDispatcher
 _pipeline = None
 _loggers = None
 _guardrails = None
+_mcp_manager = None
 _dispatchers: dict[str, StepDispatcher] = {}
 
 
 def load_dependencies():
+    global _mcp_manager
     config = cfg_module.load()
     loggers = logger_module.setup()
     guardrails = Guardrails(config)
-    mcp_manager = MCPManager(config.get("mcp_servers", []))
-    mcp_manager.start_all()
-    router = Router(config=config, guardrails=guardrails, mcp_manager=mcp_manager)
+    _mcp_manager = MCPManager(config.get("mcp_servers", []))
+    _mcp_manager.start_all()
+    router = Router(config=config, guardrails=guardrails, mcp_manager=_mcp_manager)
     from memory import ProjectMemory
     pipeline = CommandPipeline(router=router, memory=ProjectMemory())
     store = ScheduleStore()
@@ -635,6 +637,58 @@ def update_schedule(schedule_id: str, req: PatchScheduleRequest):
     if result is None:
         raise HTTPException(status_code=404, detail="Schedule not found")
     return asdict(result)
+
+
+_GITHUB_MCP_CFG = {
+    "name": "github",
+    "command": "github-mcp-server",
+    "args": ["stdio"],
+    "transport": "stdio",
+    "auth": "gh_cli",
+    "guardrail": "require_approval",
+}
+
+
+def _gh_auth_status() -> dict:
+    """Return gh CLI install and auth status."""
+    if not shutil.which("gh"):
+        return {"installed": False, "authenticated": False, "user": None}
+    try:
+        r = subprocess.run(["gh", "auth", "status", "--json", "activeAccount"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            return {"installed": True, "authenticated": False, "user": None}
+        import json as _json
+        data = _json.loads(r.stdout)
+        user = data.get("activeAccount", {}).get("login") if isinstance(data, dict) else None
+        return {"installed": True, "authenticated": True, "user": user}
+    except Exception:
+        return {"installed": True, "authenticated": False, "user": None}
+
+
+@app.get("/connect/github")
+def github_status():
+    return _gh_auth_status()
+
+
+@app.post("/connect/github")
+def github_connect():
+    status = _gh_auth_status()
+    if not status["authenticated"]:
+        msg = "Not authenticated with GitHub. Run: gh auth login"
+        raise HTTPException(status_code=402, detail=msg)
+
+    config = cfg_module.load()
+    servers = config.get("mcp_servers", [])
+    if not any(s["name"] == "github" for s in servers):
+        servers.append(_GITHUB_MCP_CFG)
+        config["mcp_servers"] = servers
+        cfg_module.save(config)
+
+    if _mcp_manager is not None:
+        _mcp_manager.connect_server(_GITHUB_MCP_CFG)
+
+    return {"connected": True, "user": status["user"]}
 
 
 if __name__ == "__main__":
