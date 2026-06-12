@@ -84,6 +84,22 @@ def test_format_response_no_voice_tag_falls_back_to_heuristic():
     assert result["display"] == long_text
 
 
+def test_format_response_does_not_split_on_decimal_point():
+    """Heuristic must not split 'Python version 3.5' into 'Python version 3'."""
+    # The split-on-'.' bug only manifests when text before the first '.' is 11–140 chars.
+    # "Python version 3" is 16 chars → currently produces speak "Python version 3."
+    text = "Python version 3.5 is now installed on your system. " + "A" * 120
+    result = format_response(text, tool_calls_made=["shell_run"])
+    assert "3.5" in result["speak"], f"decimal was split; speak={result['speak']!r}"
+
+
+def test_format_response_splits_on_real_sentence_boundary():
+    """Heuristic should produce first sentence when text is >= 150 chars."""
+    text = "The build succeeded. " + "A" * 140
+    result = format_response(text, tool_calls_made=["shell_run"])
+    assert result["speak"] == "The build succeeded."
+
+
 def test_web_fetch_empty_body_returns_empty_string_not_error():
     """web_fetch with empty string body should return '' not 'error=None'."""
     agent = make_agent()
@@ -108,14 +124,36 @@ def test_execute_tool_shell_run_uses_cwd():
     agent = make_agent()
     with patch.object(agent._shell, "run", return_value={"exit_code": 0, "stdout": "ok", "stderr": "", "error": None}) as mock_run:
         execute_tool("shell_run", {"command": "pytest"}, agent._shell, agent._web, agent._code, agent._macos, agent._guardrails, default_cwd="/my/project")
-    mock_run.assert_called_once_with("pytest", cwd="/my/project")
+    _, kwargs = mock_run.call_args
+    assert kwargs["cwd"] == "/my/project"
 
 
 def test_execute_tool_cwd_override_from_input():
     agent = make_agent()
     with patch.object(agent._shell, "run", return_value={"exit_code": 0, "stdout": "", "stderr": "", "error": None}) as mock_run:
         execute_tool("shell_run", {"command": "ls", "cwd": "/override"}, agent._shell, agent._web, agent._code, agent._macos, agent._guardrails, default_cwd="/default")
-    mock_run.assert_called_once_with("ls", cwd="/override")
+    _, kwargs = mock_run.call_args
+    assert kwargs["cwd"] == "/override"
+
+
+def test_execute_tool_shell_run_passes_timeout_when_provided():
+    """dispatch passes the timeout from tool_input through to shell.run."""
+    agent = make_agent()
+    with patch.object(agent._shell, "run", return_value={"exit_code": 0, "stdout": "", "stderr": "", "error": None}) as mock_run:
+        execute_tool("shell_run", {"command": "make build", "timeout": 120},
+                     agent._shell, agent._web, agent._code, agent._macos, agent._guardrails, default_cwd=None)
+    _, kwargs = mock_run.call_args
+    assert kwargs["timeout"] == 120
+
+
+def test_execute_tool_shell_run_caps_timeout_at_maximum():
+    """dispatch caps oversized timeouts to prevent abuse."""
+    agent = make_agent()
+    with patch.object(agent._shell, "run", return_value={"exit_code": 0, "stdout": "", "stderr": "", "error": None}) as mock_run:
+        execute_tool("shell_run", {"command": "sleep 9999", "timeout": 99999},
+                     agent._shell, agent._web, agent._code, agent._macos, agent._guardrails, default_cwd=None)
+    _, kwargs = mock_run.call_args
+    assert kwargs["timeout"] <= 600
 
 
 def test_execute_tool_run_code_multi_language():

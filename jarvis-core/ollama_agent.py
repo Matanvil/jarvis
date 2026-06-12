@@ -239,6 +239,9 @@ class OllamaAgent:
 
     @property
     def _chat_template_kwargs(self) -> dict | None:
+        # rapid-mlx handles chat templating internally — don't inject Ollama-specific kwargs
+        if self._config.get("ollama", {}).get("executor_rapid_mlx"):
+            return None
         return self._config.get("ollama", {}).get("executor_chat_template_kwargs")
 
     @property

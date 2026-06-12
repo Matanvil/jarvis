@@ -51,10 +51,26 @@ def test_submit_marks_command_completed(pipeline):
 
 # ── busy lock ─────────────────────────────────────────────────────────────────
 
+def test_submit_while_lock_held_returns_busy(pipeline, mock_router):
+    """Submit returns busy immediately when the threading lock is held (thread-safe)."""
+    pipeline._lock.acquire()
+    pipeline._current_command_id = "running-id"
+    try:
+        result = pipeline.submit("another command", cwd=None, source="hotkey")
+    finally:
+        pipeline._lock.release()
+    assert result.get("busy") is True
+    assert result.get("command_id") == "running-id"
+    mock_router.process.assert_not_called()
+
+
 def test_submit_while_busy_returns_busy_response(pipeline, mock_router):
-    pipeline._executing = True
+    pipeline._lock.acquire()
     pipeline._current_command_id = "fake-id"
-    result = pipeline.submit("another command", cwd=None, source="hotkey")
+    try:
+        result = pipeline.submit("another command", cwd=None, source="hotkey")
+    finally:
+        pipeline._lock.release()
     assert result.get("busy") is True
     assert result.get("command_id") == "fake-id"
     mock_router.process.assert_not_called()
@@ -62,20 +78,20 @@ def test_submit_while_busy_returns_busy_response(pipeline, mock_router):
 
 def test_submit_releases_lock_after_completion(pipeline):
     pipeline.submit("do something", cwd=None, source="hotkey")
-    assert pipeline._executing is False
+    assert not pipeline._lock.locked()
 
 
 def test_submit_releases_lock_on_router_exception(pipeline, mock_router):
     mock_router.process.side_effect = RuntimeError("boom")
     with pytest.raises(RuntimeError):
         pipeline.submit("bad command", cwd=None, source="hotkey")
-    assert pipeline._executing is False
+    assert not pipeline._lock.locked()
 
 
 # ── cancel ────────────────────────────────────────────────────────────────────
 
 def test_cancel_executing_command_releases_lock(pipeline):
-    pipeline._executing = True
+    pipeline._lock.acquire()
     pipeline._current_command_id = "abc"
     cmd = pipeline._create_command("running task", cwd=None, source="hotkey")
     cmd.id = "abc"
@@ -84,7 +100,7 @@ def test_cancel_executing_command_releases_lock(pipeline):
 
     result = pipeline.cancel("abc")
     assert result["cancelled"] is True
-    assert pipeline._executing is False
+    assert not pipeline._lock.locked()
     assert pipeline._registry["abc"].status == CommandStatus.CANCELLED
 
 
@@ -96,11 +112,11 @@ def test_cancel_unknown_id_returns_not_found(pipeline):
 # ── abort ─────────────────────────────────────────────────────────────────────
 
 def test_abort_force_releases_lock(pipeline):
-    pipeline._executing = True
+    pipeline._lock.acquire()
     pipeline._current_command_id = "stuck"
     result = pipeline.abort()
     assert result["lock_released"] is True
-    assert pipeline._executing is False
+    assert not pipeline._lock.locked()
 
 
 # ── registry ──────────────────────────────────────────────────────────────────

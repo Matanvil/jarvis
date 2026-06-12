@@ -2,30 +2,12 @@ import json
 import logging
 import time
 import httpx
+from classifier_prompt import CLASSIFY_SYSTEM_PROMPT
 from guardrails import Guardrails
 from ollama_agent import OllamaAgent, EscalateToCloud
 from agent import Agent, claude_code_available
 
 _VALID_ROUTING_MODES = {"ollama_first", "claude_only", "ollama_only", "haiku_first", "local_first"}
-
-_CLASSIFY_SYSTEM_PROMPT = """You are a command classifier. Analyze the user request and return ONLY a JSON object — no other text.
-
-Return exactly this structure:
-{
-  "can_handle_locally": true or false,
-  "intent_class": "read_only" or "prepare" or "destructive" or "complex_reasoning",
-  "reason": "one sentence explanation"
-}
-
-Rules for can_handle_locally:
-- true: task needs only file ops, shell commands, app control, code execution, OS queries
-- false: task needs web search, current news/prices, advanced code generation, deep reasoning
-
-Rules for intent_class:
-- read_only: just reading or querying, no changes (list files, read a file, show git log, check dependencies, explain code, search a codebase)
-- prepare: will make changes the user should preview (generate code, draft text, move files)
-- destructive: deletes files, sends messages, modifies system settings, irreversible actions
-- complex_reasoning: needs web search, real-time data, or external information NOT available on this machine (news, prices, current events, remote APIs, live documentation). Git history, local files, installed packages, running processes, and codebase questions are NOT complex_reasoning — they are read_only."""
 
 
 class Router:
@@ -37,6 +19,7 @@ class Router:
 
     def __init__(self, config: dict, guardrails: Guardrails):
         self._config = config
+        self._http_client = httpx.Client(timeout=httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=5.0))
         self._ollama = OllamaAgent(config=config, guardrails=guardrails)
         haiku_model = config.get("models", {}).get("haiku", "claude-haiku-4-5-20251001")
         sonnet_model = config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
@@ -90,27 +73,26 @@ class Router:
         return float(self._config.get("ollama", {}).get("timeout_seconds", 30))
 
     def _classify(self, text: str) -> dict:
-        """Ask Ollama to classify intent. Returns classification dict.
+        """Ask the classifier to classify intent. Returns classification dict.
         Raises on any error — caller handles gracefully."""
-        with httpx.Client(timeout=httpx.Timeout(connect=5.0, read=self._ollama_timeout, write=30.0, pool=5.0)) as client:
-            resp = client.post(
-                f"{self._classifier_host}/v1/chat/completions",
-                json={
-                    "model": self._classifier_model,
-                    "messages": [
-                        {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
-                        {"role": "user", "content": text},
-                    ],
-                    "chat_template_kwargs": {"enable_thinking": False},
-                },
-            )
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"] or ""
-            # Extract JSON robustly — model may wrap output in tags or non-Latin text
-            start, end = content.find("{"), content.rfind("}")
-            if start == -1 or end == -1:
-                raise ValueError(f"No JSON object found in classifier response: {content!r}")
-            return json.loads(content[start:end + 1])
+        resp = self._http_client.post(
+            f"{self._classifier_host}/v1/chat/completions",
+            json={
+                "model": self._classifier_model,
+                "messages": [
+                    {"role": "system", "content": CLASSIFY_SYSTEM_PROMPT},
+                    {"role": "user", "content": text},
+                ],
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"] or ""
+        # Extract JSON robustly — model may wrap output in tags or non-Latin text
+        start, end = content.find("{"), content.rfind("}")
+        if start == -1 or end == -1:
+            raise ValueError(f"No JSON object found in classifier response: {content!r}")
+        return json.loads(content[start:end + 1])
 
     def resume(self, command_id: str, step_callback=None) -> dict | None:
         """Continue a run paused for approval. Returns the annotated final result,
@@ -259,10 +241,6 @@ class Router:
         assistant_text = result.get("display") or result.get("speak") or ""
         if not assistant_text:
             return
-        steps = result.get("steps") or []
-        if steps:
-            tools_used = ", ".join(s["tool"] for s in steps)
-            assistant_text = f"{assistant_text}\n\n[Tools used: {tools_used}]"
         self._history.extend([
             {"role": "user", "content": user_text},
             {"role": "assistant", "content": assistant_text},

@@ -68,18 +68,76 @@ def _ensure_ollama_running() -> None:
     logging.info("[Jarvis] ollama serve started via %s", ollama_bin)
 
 
-def _ensure_mlx_server_running(config: dict) -> None:
-    """Start mlx_lm.server in the background if local_first mode is active and it isn't already running."""
+def _ensure_executor_server_running(config: dict) -> None:
+    """Start the executor inference server if local_first mode is active and it isn't already running.
+    Uses rapid-mlx when executor_rapid_mlx=True, mlx_lm.server otherwise."""
     ollama_cfg = config.get("ollama", {})
     if ollama_cfg.get("routing_mode") != "local_first":
         return
+    base_host = ollama_cfg.get("host", "http://localhost:11434")
     executor_host = ollama_cfg.get("executor_host", "")
     executor_model = ollama_cfg.get("executor_model", "")
     if not executor_host or not executor_model:
         return
+    if executor_host == base_host:
+        return
 
     try:
         r = httpx.get(f"{executor_host}/v1/models", timeout=2)
+        if r.status_code < 500:
+            return  # already running
+    except Exception:
+        pass  # not running — start it
+
+    from urllib.parse import urlparse
+    parsed = urlparse(executor_host)
+    port = parsed.port or 8093
+
+    if ollama_cfg.get("executor_rapid_mlx"):
+        rapid_bin = (
+            shutil.which("rapid-mlx")
+            or (p if (p := "/opt/homebrew/bin/rapid-mlx") and os.path.exists(p) else None)
+        )
+        if not rapid_bin:
+            logging.warning("[Jarvis] rapid-mlx binary not found — skipping executor auto-start")
+            return
+        cmd = [
+            rapid_bin, "serve", executor_model,
+            "--port", str(port), "--host", "127.0.0.1",
+            "--enable-auto-tool-choice", "--tool-call-parser", "qwen3_coder_xml",
+        ]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logging.info("[Jarvis] rapid-mlx executor started: model=%s port=%d", executor_model, port)
+    else:
+        mlx_bin = (
+            shutil.which("mlx_lm.server")
+            or (p if (p := "/opt/homebrew/bin/mlx_lm.server") and os.path.exists(p) else None)
+        )
+        if not mlx_bin:
+            logging.warning("[Jarvis] mlx_lm.server binary not found — skipping executor auto-start")
+            return
+        chat_template_kwargs = ollama_cfg.get("executor_chat_template_kwargs", {})
+        chat_template_args = json.dumps(chat_template_kwargs) if chat_template_kwargs else None
+        cmd = [mlx_bin, "--model", executor_model, "--port", str(port)]
+        if chat_template_args:
+            cmd += ["--chat-template-args", chat_template_args]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logging.info("[Jarvis] mlx_lm.server executor started: model=%s port=%d", executor_model, port)
+
+
+def _ensure_classifier_server_running(config: dict) -> None:
+    """Start mlx_lm.server for the classifier if it runs on a separate host and isn't already up."""
+    ollama_cfg = config.get("ollama", {})
+    base_host = ollama_cfg.get("host", "http://localhost:11434")
+    classifier_host = ollama_cfg.get("classifier_host", "")
+    classifier_model = ollama_cfg.get("classifier_model", "")
+    if not classifier_host or not classifier_model:
+        return
+    if classifier_host == base_host:
+        return  # classifier is on Ollama, no MLX server needed
+
+    try:
+        r = httpx.get(f"{classifier_host}/v1/models", timeout=2)
         if r.status_code < 500:
             return  # already running
     except Exception:
@@ -90,22 +148,22 @@ def _ensure_mlx_server_running(config: dict) -> None:
         or (p if (p := "/opt/homebrew/bin/mlx_lm.server") and os.path.exists(p) else None)
     )
     if not mlx_bin:
-        logging.warning("[Jarvis] mlx_lm.server binary not found — skipping auto-start")
+        logging.warning("[Jarvis] mlx_lm.server binary not found — skipping classifier auto-start")
         return
 
     from urllib.parse import urlparse
-    parsed = urlparse(executor_host)
+    parsed = urlparse(classifier_host)
     port = parsed.port or 8090
 
-    chat_template_kwargs = ollama_cfg.get("executor_chat_template_kwargs", {})
-    chat_template_args = json.dumps(chat_template_kwargs) if chat_template_kwargs else None
+    cmd = [mlx_bin, "--model", classifier_model, "--port", str(port)]
 
-    cmd = [mlx_bin, "--model", executor_model, "--port", str(port)]
-    if chat_template_args:
-        cmd += ["--chat-template-args", chat_template_args]
+    adapter_path = ollama_cfg.get("classifier_adapter_path", "")
+    if adapter_path and os.path.exists(adapter_path):
+        cmd += ["--adapter-path", adapter_path]
 
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    logging.info("[Jarvis] mlx_lm.server started: model=%s port=%d", executor_model, port)
+    logging.info("[Jarvis] mlx_lm.server (classifier) started: model=%s port=%d adapter=%s",
+                 classifier_model, port, adapter_path or "none")
 
 
 @asynccontextmanager
@@ -113,7 +171,8 @@ async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
     config = cfg_module.load()
     _ensure_ollama_running()
-    _ensure_mlx_server_running(config)
+    _ensure_executor_server_running(config)
+    _ensure_classifier_server_running(config)
     alert_bus.set_loop(asyncio.get_running_loop())
     _pipeline, _loggers, _guardrails, store = load_dependencies()
     scheduler = Scheduler(store=store, pipeline=_pipeline)
@@ -190,6 +249,11 @@ def reset_conversation():
 
 def _log_command(req: "CommandRequest", start: float, result: dict) -> None:
     """Log command analytics and training data."""
+    _log_command_result(req, start, result, resumed=False)
+
+
+def _log_command_result(req: "CommandRequest", start: float, result: dict, *, resumed: bool) -> None:
+    """Log command analytics and training data for both fresh and resumed runs."""
     duration_ms = int((time.time() - start) * 1000)
     if _loggers:
         _loggers["commands"].info(
@@ -201,6 +265,7 @@ def _log_command(req: "CommandRequest", start: float, result: dict) -> None:
             "has_approval_required": "approval_required" in result,
             "agent": result.get("_agent"),
             "model": result.get("_model"),
+            "resumed": resumed,
             "escalated": result.get("_escalated"),
             "escalation_reason": result.get("_escalation_reason"),
             "agent_response_ms": result.get("_response_ms"),
@@ -386,6 +451,9 @@ async def approve(req: ApprovalRequest):
     # and continue) instead of having the client replay the whole command. Falls back
     # to reissue_command when there is no paused state (e.g. after a server restart).
     if req.command_id and approval_store.has(req.command_id):
+        paused_entry = approval_store.get(req.command_id) or {}
+        paused_meta = paused_entry.get("meta", {})
+        start = time.time()
         loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(None, lambda: _pipeline.resume(req.command_id))
@@ -398,6 +466,12 @@ async def approve(req: ApprovalRequest):
                 _guardrails.clear_session_trusts()
         if result is None or result.get("busy"):
             return {"acknowledged": True, "next_action": "reissue_command"}
+        resume_req = CommandRequest(
+            text=paused_meta.get("user_text", ""),
+            cwd=paused_meta.get("cwd"),
+            source=paused_meta.get("source", "approval"),
+        )
+        _log_command_result(resume_req, start, result, resumed=True)
         return {"acknowledged": True, "next_action": "resumed", **result}
 
     # No paused state — client re-issues the original command (category now trusted).

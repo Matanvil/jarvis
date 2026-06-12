@@ -1,4 +1,5 @@
 import fnmatch
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -45,47 +46,95 @@ class ShellTool:
         """Case-insensitive file/directory search by name pattern under directory."""
         try:
             root = Path(directory).expanduser().resolve()
-            pattern_lower = pattern.lower()
-            matches = []
-            for p in root.rglob("*"):
-                if file_type == "file" and not p.is_file():
-                    continue
-                if file_type == "dir" and not p.is_dir():
-                    continue
-                if fnmatch.fnmatch(p.name.lower(), pattern_lower):
-                    matches.append(str(p))
-                if len(matches) >= 100:
-                    break
-            return {"matches": matches, "count": len(matches), "error": None}
+            mdfind_bin = shutil.which("mdfind")
+            if mdfind_bin:
+                return self._find_files_mdfind(mdfind_bin, pattern, root, file_type)
+            return self._find_files_rglob(pattern, root, file_type)
         except Exception as e:
             return {"matches": [], "count": 0, "error": str(e)}
+
+    def _find_files_mdfind(self, mdfind_bin: str, pattern: str, root: Path, file_type: str) -> dict:
+        query = f'kMDItemFSName == "{pattern}"c'
+        result = subprocess.run(
+            [mdfind_bin, query, "-onlyin", str(root)],
+            capture_output=True, text=True, timeout=15,
+        )
+        raw = [p for p in result.stdout.strip().splitlines() if p]
+        matches = []
+        for p_str in raw:
+            p = Path(p_str)
+            if file_type == "file" and not p.is_file():
+                continue
+            if file_type == "dir" and not p.is_dir():
+                continue
+            matches.append(p_str)
+            if len(matches) >= 100:
+                break
+        return {"matches": matches, "count": len(matches), "error": None}
+
+    def _find_files_rglob(self, pattern: str, root: Path, file_type: str) -> dict:
+        pattern_lower = pattern.lower()
+        matches = []
+        for p in root.rglob("*"):
+            if file_type == "file" and not p.is_file():
+                continue
+            if file_type == "dir" and not p.is_dir():
+                continue
+            if fnmatch.fnmatch(p.name.lower(), pattern_lower):
+                matches.append(str(p))
+            if len(matches) >= 100:
+                break
+        return {"matches": matches, "count": len(matches), "error": None}
 
     def search_content(self, pattern: str, directory: str = "~",
                        file_glob: str = "*", case_sensitive: bool = False) -> dict:
         """Search for a text pattern inside files. Returns matching file paths and lines."""
         try:
             root = Path(directory).expanduser().resolve()
-            flags = [] if case_sensitive else ["-i"]
-            # Add --exclude-dir for common large/irrelevant trees to avoid timeouts
-            excludes = ["--exclude-dir=.git", "--exclude-dir=.venv", "--exclude-dir=node_modules",
-                        "--exclude-dir=__pycache__", "--exclude-dir=.DS_Store"]
-            result = subprocess.run(
-                ["grep", "-r", "--include", file_glob, "-l", *flags, *excludes, pattern, str(root)],
-                capture_output=True, text=True, timeout=10
-            )
-            files = [f for f in result.stdout.strip().splitlines() if f]
-            # For each matched file get the matching lines (up to 5 per file)
-            snippets = []
-            for fpath in files[:20]:
-                r2 = subprocess.run(
-                    ["grep", "-n", "--include", file_glob, *flags, "-m", "5", pattern, fpath],
-                    capture_output=True, text=True, timeout=5
-                )
-                if r2.stdout.strip():
-                    snippets.append({"file": fpath, "lines": r2.stdout.strip().splitlines()})
-            return {"files": files, "snippets": snippets, "count": len(files), "error": None}
+            rg_bin = shutil.which("rg")
+            if rg_bin:
+                return self._search_content_rg(rg_bin, pattern, root, file_glob, case_sensitive)
+            return self._search_content_grep(pattern, root, file_glob, case_sensitive)
         except Exception as e:
             return {"files": [], "snippets": [], "count": 0, "error": str(e)}
+
+    def _search_content_rg(self, rg_bin: str, pattern: str, root: Path,
+                            file_glob: str, case_sensitive: bool) -> dict:
+        flags = [] if case_sensitive else ["-i"]
+        result = subprocess.run(
+            [rg_bin, "-l", "--glob", file_glob, *flags, pattern, str(root)],
+            capture_output=True, text=True, timeout=30,
+        )
+        files = [f for f in result.stdout.strip().splitlines() if f]
+        snippets = []
+        for fpath in files[:20]:
+            r2 = subprocess.run(
+                [rg_bin, "-n", "-m", "5", "--glob", file_glob, *flags, pattern, fpath],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r2.stdout.strip():
+                snippets.append({"file": fpath, "lines": r2.stdout.strip().splitlines()})
+        return {"files": files, "snippets": snippets, "count": len(files), "error": None}
+
+    def _search_content_grep(self, pattern: str, root: Path,
+                              file_glob: str, case_sensitive: bool) -> dict:
+        flags = [] if case_sensitive else ["-i"]
+        excludes = ["--exclude-dir=.git", "--exclude-dir=.venv", "--exclude-dir=node_modules",
+                    "--exclude-dir=__pycache__", "--exclude-dir=.DS_Store"]
+        result = subprocess.run(
+            ["grep", "-r", "--include", file_glob, "-l", *flags, *excludes, pattern, str(root)],
+            capture_output=True, text=True, timeout=30,
+        )
+        files = [f for f in result.stdout.strip().splitlines() if f]
+        snippets = []
+        for fpath in files[:20]:
+            r2 = subprocess.run(
+                ["grep", "-n", "--include", file_glob, *flags, "-m", "5", pattern, fpath],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r2.stdout.strip():
+                snippets.append({"file": fpath, "lines": r2.stdout.strip().splitlines()})
+        return {"files": files, "snippets": snippets, "count": len(files), "error": None}
 
     def file_edit(self, path: str, old_string: str, new_string: str,
                   replace_all: bool = False) -> dict:

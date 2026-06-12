@@ -383,10 +383,10 @@ def test_resume_invokes_stored_resumer_and_annotates(haiku_router):
     assert not approval_store.has("c1")  # popped
 
 
-def test_default_executor_model_is_qwen35_opus_jarvis():
-    """Default ollama executor model should be qwen35-opus-jarvis."""
+def test_default_base_ollama_model_is_qwen36():
+    """Default base Ollama model should align with the selected Qwen executor."""
     from config import DEFAULTS
-    assert DEFAULTS["ollama"]["model"] == "qwen35-opus-jarvis"
+    assert DEFAULTS["ollama"]["model"] == "qwen3.6:35b-a3b"
 
 
 def test_classifier_model_in_defaults():
@@ -403,8 +403,8 @@ def test_local_first_annotates_result_with_executor_model_name(local_first_route
 
 # ── history tool summary ──────────────────────────────────────────────────────
 
-def test_history_includes_tools_used_when_steps_present(haiku_router, mock_haiku_agent):
-    """Assistant history entry appends [Tools used: ...] when steps are present."""
+def test_history_does_not_include_tools_used_annotation(haiku_router, mock_haiku_agent):
+    """History must never contain [Tools used: ...] — teaching the model to emit it."""
     mock_haiku_agent.run.return_value = {
         "speak": "Done.", "display": "Done.",
         "steps": [
@@ -418,7 +418,7 @@ def test_history_includes_tools_used_when_steps_present(haiku_router, mock_haiku
         haiku_router.process("fetch github issues")
 
     assistant_msg = haiku_router._history[-1]["content"]
-    assert "[Tools used: web_fetch, run_code]" in assistant_msg
+    assert "[Tools used:" not in assistant_msg
 
 
 def test_history_no_tools_suffix_when_no_steps(haiku_router, mock_haiku_agent):
@@ -433,3 +433,14 @@ def test_history_no_tools_suffix_when_no_steps(haiku_router, mock_haiku_agent):
 
     assistant_msg = haiku_router._history[-1]["content"]
     assert "[Tools used:" not in assistant_msg
+
+
+# ── classifier shared http client ─────────────────────────────────────────────
+
+def test_classify_reuses_shared_http_client(config):
+    """Router._classify must use a shared httpx.Client, not create a new one each call."""
+    config["ollama"]["routing_mode"] = "local_first"
+    guardrails = Guardrails(config)
+    r = Router(config=config, guardrails=guardrails)
+    assert hasattr(r, "_http_client"), "Router must have a shared _http_client"
+    assert r._http_client is not None
