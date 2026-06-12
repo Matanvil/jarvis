@@ -445,7 +445,7 @@ class OllamaAgent:
             if step_callback is not None:
                 step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
             try:
-                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=self._coding)
+                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=self._coding, mcp_manager=self._mcp_manager)
                 step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
                 state.tool_calls_made.append(name)
             except ApprovalRequiredError as e:

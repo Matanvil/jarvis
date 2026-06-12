@@ -786,3 +786,34 @@ def test_ollama_agent_build_tool_list_without_mcp_returns_only_builtins():
     names = [tool["function"]["name"] for tool in tools]
     assert "shell_run" in names
     assert not any(n.startswith("mcp__") for n in names)
+
+
+def test_ollama_agent_passes_mcp_manager_to_execute_tool():
+    """OllamaAgent must pass mcp_manager when dispatching MCP tool calls."""
+    from tools.mcp import MCPManager
+    import tools._dispatch as dispatch_mod
+
+    a = OllamaAgent({"anthropic_api_key": "x", "brave_api_key": None}, Guardrails({"guardrails": {"mcp_tool": "auto_allow"}}))
+    mgr = MCPManager([{"name": "gh", "command": "x", "args": [], "transport": "stdio"}])
+    t = MagicMock(); t.name = "list_issues"; t.description = ""; t.inputSchema = {"type": "object", "properties": {}}
+    mgr._inject_tools("gh", [t])
+    a._mcp_manager = mgr
+
+    tool_resp = _tool_response("mcp__gh__list_issues", {})
+    stop_resp = _stop_response("Here are the issues.")
+
+    responses = [tool_resp, stop_resp]
+    call_idx = [0]
+    def fake_post(url, json=None, **kwargs):
+        r = responses[call_idx[0]]; call_idx[0] += 1; return r
+
+    captured = {}
+    def spy_execute(*args, **kwargs):
+        captured["mcp_manager"] = kwargs.get("mcp_manager")
+        return "[]"
+
+    with patch.object(a._http_client, "post", side_effect=fake_post):
+        with patch("ollama_agent.execute_tool", side_effect=spy_execute):
+            a.run("list issues")
+
+    assert captured.get("mcp_manager") is mgr

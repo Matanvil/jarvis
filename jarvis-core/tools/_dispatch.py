@@ -100,11 +100,17 @@ def execute_tool(
     else:
         category = TOOL_TO_GUARDRAIL_CATEGORY.get(tool_name, "run_shell")
     description = f"{tool_name}: {tool_input}"
-    action = Action(category=category, description=description)
-    decision = guardrails.classify(action)
-
-    if decision == Decision.REQUIRE_APPROVAL:
+    # MCP server configs can use policy values directly as their guardrail field
+    # (e.g. "guardrail": "auto_allow"). Short-circuit before the dict lookup so these work.
+    if category == "auto_allow":
+        pass  # skip guardrails check
+    elif category == "require_approval":
         raise ApprovalRequiredError(tool_name, description, category=category)
+    else:
+        action = Action(category=category, description=description)
+        decision = guardrails.classify(action)
+        if decision == Decision.REQUIRE_APPROVAL:
+            raise ApprovalRequiredError(tool_name, description, category=category)
 
     # cwd: tool input overrides the request-level default
     cwd = tool_input.get("cwd", default_cwd)

@@ -643,6 +643,7 @@ class Agent:
                         default_cwd=state.cwd,
                         local_agent=self._local_agent,
                         coding=self._coding,
+                        mcp_manager=self._mcp_manager,
                     )
                 step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
                 state.tool_calls_made.append(block.name)

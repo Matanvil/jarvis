@@ -807,3 +807,47 @@ def test_agent_build_tool_list_without_mcp_returns_only_builtins():
     names = [t["name"] for t in tools]
     assert "shell_run" in names
     assert not any(n.startswith("mcp__") for n in names)
+
+
+def test_agent_passes_mcp_manager_to_execute_tool():
+    """Agent must pass mcp_manager when dispatching tool calls."""
+    from tools.mcp import MCPManager
+    import tools._dispatch as dispatch_mod
+
+    config = {
+        "anthropic_api_key": "sk-test",
+        "guardrails": {"mcp_tool": "auto_allow"},
+    }
+    from guardrails import Guardrails
+    agent = Agent(config=config, guardrails=Guardrails({"guardrails": {"mcp_tool": "auto_allow"}}))
+
+    mgr = MCPManager([{"name": "gh", "command": "x", "args": [], "transport": "stdio"}])
+    t = MagicMock(); t.name = "list_issues"; t.description = ""; t.inputSchema = {"type": "object", "properties": {}}
+    mgr._inject_tools("gh", [t])
+    agent._mcp_manager = mgr
+
+    # Build a fake Claude response: one mcp tool call then end_turn
+    def tool_block():
+        b = MagicMock(); b.type = "tool_use"; b.name = "mcp__gh__list_issues"; b.input = {}; b.id = "tid1"
+        return b
+    def end_block():
+        b = MagicMock(); b.type = "text"; b.text = "Done.\nVOICE: listed issues"
+        return b
+
+    r1 = MagicMock(); r1.stop_reason = "tool_use"; r1.content = [tool_block()]
+    r2 = MagicMock(); r2.stop_reason = "end_turn"; r2.content = [end_block()]
+    calls = {"n": 0}
+    def fake_create(**kwargs):
+        r = [r1, r2][calls["n"]]; calls["n"] += 1; return r
+
+    captured = {}
+    orig_execute = dispatch_mod.execute_tool
+    def spy_execute(*args, **kwargs):
+        captured["mcp_manager"] = kwargs.get("mcp_manager")
+        return "[]"
+
+    with patch.object(agent._client.messages, "create", side_effect=fake_create):
+        with patch("agent.execute_tool", side_effect=spy_execute):
+            agent.run("list issues")
+
+    assert captured.get("mcp_manager") is mgr
