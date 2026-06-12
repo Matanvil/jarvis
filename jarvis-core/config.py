@@ -64,6 +64,7 @@ DEFAULTS = {
         "allowed_user_id": 0,
     },
     "local_model": "",
+    "mcp_servers": [],
 }
 
 

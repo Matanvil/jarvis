@@ -179,6 +179,21 @@ def test_classifier_adapter_path_default_is_empty():
     assert DEFAULTS["ollama"]["classifier_adapter_path"] == ""
 
 
+def test_mcp_servers_default_is_empty_list():
+    from config import DEFAULTS
+    assert DEFAULTS["mcp_servers"] == []
+
+
+def test_mcp_servers_loads_from_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("config.CONFIG_PATH", tmp_path / "config.json")
+    (tmp_path / "config.json").write_text(json.dumps({
+        "mcp_servers": [{"name": "fs", "command": "npx", "args": []}]
+    }))
+    cfg = config.load()
+    assert len(cfg["mcp_servers"]) == 1
+    assert cfg["mcp_servers"][0]["name"] == "fs"
+
+
 def test_classifier_adapter_path_loads_from_file(tmp_path, monkeypatch):
     monkeypatch.setattr("config.CONFIG_PATH", tmp_path / "config.json")
     (tmp_path / "config.json").write_text(json.dumps({

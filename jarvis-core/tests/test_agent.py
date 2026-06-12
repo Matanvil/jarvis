@@ -726,3 +726,128 @@ def test_non_milestone_steps_fire_step_callback():
     assert len(step_type_events) == 2, f"Expected 2 step events, got {len(step_type_events)}"
     assert step_type_events[0]["milestone"] is True
     assert step_type_events[1]["milestone"] is False
+
+
+# ---------------------------------------------------------------------------
+# MCP dispatch via execute_tool
+# ---------------------------------------------------------------------------
+
+def _make_mcp_manager(server="fs", tool_result="file contents"):
+    from tools.mcp import MCPManager
+    mgr = MCPManager([{"name": server, "command": "npx", "args": [], "transport": "stdio"}])
+    mgr.call_tool = MagicMock(return_value=tool_result)
+    return mgr
+
+
+def test_execute_tool_routes_mcp_tool_to_mcp_manager():
+    guardrails = Guardrails({"guardrails": {"mcp_tool": "auto_allow"}})
+    shell = MagicMock(); web = MagicMock(); code = MagicMock(); macos = MagicMock()
+    mgr = _make_mcp_manager("fs", "file data")
+
+    result = execute_tool(
+        "mcp__fs__read_file", {"path": "/tmp/test.txt"},
+        shell, web, code, macos, guardrails,
+        mcp_manager=mgr,
+    )
+    mgr.call_tool.assert_called_once_with("fs", "read_file", {"path": "/tmp/test.txt"})
+    assert result == "file data"
+
+
+def test_execute_tool_mcp_tool_requires_approval_by_default():
+    from tools._errors import ApprovalRequiredError
+    # mcp_tool not in guardrails config → defaults to require_approval
+    guardrails = Guardrails({"guardrails": {}})
+    shell = MagicMock(); web = MagicMock(); code = MagicMock(); macos = MagicMock()
+    mgr = _make_mcp_manager("fs")
+
+    with pytest.raises(ApprovalRequiredError):
+        execute_tool(
+            "mcp__fs__read_file", {"path": "/tmp/test.txt"},
+            shell, web, code, macos, guardrails,
+            mcp_manager=mgr,
+        )
+
+
+def test_execute_tool_mcp_tool_no_manager_returns_error():
+    guardrails = Guardrails({"guardrails": {"run_shell": "auto_allow"}})
+    shell = MagicMock(); web = MagicMock(); code = MagicMock(); macos = MagicMock()
+
+    result = execute_tool(
+        "mcp__fs__read_file", {"path": "/tmp/test.txt"},
+        shell, web, code, macos, guardrails,
+        mcp_manager=None,
+    )
+    assert "error" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# Agent dynamic tool injection via mcp_manager
+# ---------------------------------------------------------------------------
+
+def test_agent_includes_mcp_tools_in_tool_list():
+    agent = make_agent()
+    from tools.mcp import MCPManager
+    mgr = MCPManager([{"name": "fs", "command": "npx", "args": [], "transport": "stdio"}])
+    t = MagicMock()
+    t.name = "read_file"
+    t.description = "Read"
+    t.inputSchema = {"type": "object", "properties": {}}
+    mgr._inject_tools("fs", [t])
+    agent._mcp_manager = mgr
+    tools = agent._build_tool_list()
+    names = [t["name"] for t in tools]
+    assert "mcp__fs__read_file" in names
+    assert "shell_run" in names  # built-ins still present
+
+
+def test_agent_build_tool_list_without_mcp_returns_only_builtins():
+    agent = make_agent()
+    agent._mcp_manager = None
+    tools = agent._build_tool_list()
+    names = [t["name"] for t in tools]
+    assert "shell_run" in names
+    assert not any(n.startswith("mcp__") for n in names)
+
+
+def test_agent_passes_mcp_manager_to_execute_tool():
+    """Agent must pass mcp_manager when dispatching tool calls."""
+    from tools.mcp import MCPManager
+    import tools._dispatch as dispatch_mod
+
+    config = {
+        "anthropic_api_key": "sk-test",
+        "guardrails": {"mcp_tool": "auto_allow"},
+    }
+    from guardrails import Guardrails
+    agent = Agent(config=config, guardrails=Guardrails({"guardrails": {"mcp_tool": "auto_allow"}}))
+
+    mgr = MCPManager([{"name": "gh", "command": "x", "args": [], "transport": "stdio"}])
+    t = MagicMock(); t.name = "list_issues"; t.description = ""; t.inputSchema = {"type": "object", "properties": {}}
+    mgr._inject_tools("gh", [t])
+    agent._mcp_manager = mgr
+
+    # Build a fake Claude response: one mcp tool call then end_turn
+    def tool_block():
+        b = MagicMock(); b.type = "tool_use"; b.name = "mcp__gh__list_issues"; b.input = {}; b.id = "tid1"
+        return b
+    def end_block():
+        b = MagicMock(); b.type = "text"; b.text = "Done.\nVOICE: listed issues"
+        return b
+
+    r1 = MagicMock(); r1.stop_reason = "tool_use"; r1.content = [tool_block()]
+    r2 = MagicMock(); r2.stop_reason = "end_turn"; r2.content = [end_block()]
+    calls = {"n": 0}
+    def fake_create(**kwargs):
+        r = [r1, r2][calls["n"]]; calls["n"] += 1; return r
+
+    captured = {}
+    orig_execute = dispatch_mod.execute_tool
+    def spy_execute(*args, **kwargs):
+        captured["mcp_manager"] = kwargs.get("mcp_manager")
+        return "[]"
+
+    with patch.object(agent._client.messages, "create", side_effect=fake_create):
+        with patch("agent.execute_tool", side_effect=spy_execute):
+            agent.run("list issues")
+
+    assert captured.get("mcp_manager") is mgr

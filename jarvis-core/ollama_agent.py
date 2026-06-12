@@ -202,7 +202,7 @@ class _OllamaLoopState:
 
 
 class OllamaAgent:
-    def __init__(self, config: dict, guardrails: Guardrails):
+    def __init__(self, config: dict, guardrails: Guardrails, mcp_manager=None):
         self._config = config
         self._guardrails = guardrails
         self._shell = ShellTool()
@@ -211,12 +211,21 @@ class OllamaAgent:
         self._macos = MacOSTool()
         from tools.coding_agent import CodingAgentTool
         self._coding = CodingAgentTool(config)
+        self._mcp_manager = mcp_manager
         # Shared client reuses TCP connection to the persistent Ollama process.
         # Note: if timeout is updated via POST /config after construction, the
         # existing client will not pick up the new value — acceptable for now.
         self._http_client = httpx.Client(
             timeout=httpx.Timeout(connect=5.0, read=self._timeout, write=30.0, pool=5.0)
         )
+
+    def _build_tool_list(self) -> list[dict]:
+        """Return Ollama-format tool list with built-ins plus any MCP tools."""
+        base = list(_OLLAMA_TOOLS)
+        if self._mcp_manager is not None:
+            mcp_schemas = self._mcp_manager.tool_schemas()
+            base = base + _anthropic_to_ollama_tools(mcp_schemas)
+        return base
 
     def close(self) -> None:
         self._http_client.close()
@@ -309,7 +318,7 @@ class OllamaAgent:
         try:
             while state.steps_used < state.max_steps:
                 state.steps_used += 1
-                payload = {"model": self._model, "messages": state.messages, "tools": _OLLAMA_TOOLS}
+                payload = {"model": self._model, "messages": state.messages, "tools": self._build_tool_list()}
                 if self._chat_template_kwargs:
                     payload["chat_template_kwargs"] = self._chat_template_kwargs
 
@@ -436,7 +445,7 @@ class OllamaAgent:
             if step_callback is not None:
                 step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
             try:
-                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=self._coding)
+                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=self._coding, mcp_manager=self._mcp_manager)
                 step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
                 state.tool_calls_made.append(name)
             except ApprovalRequiredError as e:

@@ -466,7 +466,7 @@ class _ClaudeLoopState:
 
 class Agent:
     def __init__(self, config: dict, guardrails: Guardrails, local_agent=None,
-                 model: str = "claude-haiku-4-5-20251001"):
+                 model: str = "claude-haiku-4-5-20251001", mcp_manager=None):
         self._config = config
         self._guardrails = guardrails
         self._model = model
@@ -478,6 +478,13 @@ class Agent:
         self._coding = CodingAgentTool(config)
         self._logger = logging.getLogger("jarvis.commands")
         self._local_agent = local_agent
+        self._mcp_manager = mcp_manager
+
+    def _build_tool_list(self) -> list[dict]:
+        """Return TOOL_DEFINITIONS plus any MCP tools registered with the manager."""
+        if self._mcp_manager is not None:
+            return TOOL_DEFINITIONS + self._mcp_manager.tool_schemas()
+        return list(TOOL_DEFINITIONS)
 
     def _build_system_prompt(self, cwd: str | None, memory_context: str = "", source: str = "") -> str:
         prompt = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~"))
@@ -545,7 +552,7 @@ class Agent:
             # Omit delegate_to_local when Ollama is down to avoid wasting a step.
             # Omit notify for scheduled tasks — the scheduler fires the notification itself.
             available_tools = [
-                t for t in TOOL_DEFINITIONS
+                t for t in self._build_tool_list()
                 if (t["name"] != "delegate_to_local" or state.ollama_available)
                 and (t["name"] != "notify" or state.source != "scheduled")
             ]
@@ -636,6 +643,7 @@ class Agent:
                         default_cwd=state.cwd,
                         local_agent=self._local_agent,
                         coding=self._coding,
+                        mcp_manager=self._mcp_manager,
                     )
                 step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
                 state.tool_calls_made.append(block.name)

@@ -17,16 +17,16 @@ class Router:
 
     _MAX_HISTORY = 10  # 5 turns (user + assistant per turn)
 
-    def __init__(self, config: dict, guardrails: Guardrails):
+    def __init__(self, config: dict, guardrails: Guardrails, mcp_manager=None):
         self._config = config
         self._http_client = httpx.Client(timeout=httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=5.0))
-        self._ollama = OllamaAgent(config=config, guardrails=guardrails)
+        self._ollama = OllamaAgent(config=config, guardrails=guardrails, mcp_manager=mcp_manager)
         haiku_model = config.get("models", {}).get("haiku", "claude-haiku-4-5-20251001")
         sonnet_model = config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
         self._haiku = Agent(config=config, guardrails=guardrails,
-                            local_agent=self._ollama, model=haiku_model)
+                            local_agent=self._ollama, model=haiku_model, mcp_manager=mcp_manager)
         self._sonnet = Agent(config=config, guardrails=guardrails,
-                             local_agent=self._ollama, model=sonnet_model)
+                             local_agent=self._ollama, model=sonnet_model, mcp_manager=mcp_manager)
         self._claude = self._sonnet   # legacy alias for claude_only / ollama_first modes
         self._history: list[dict] = []
 
