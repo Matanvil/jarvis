@@ -48,6 +48,7 @@ def _code_guardrail_category(code: str) -> str:
 
 # Timeout for delegated Claude Code tasks (complex codebase work can take a while)
 _CLAUDE_CODE_TIMEOUT = 300
+_MAX_SHELL_TIMEOUT = 600
 
 TOOL_TO_GUARDRAIL_CATEGORY = {
     "shell_run": "run_shell",
@@ -105,7 +106,9 @@ def execute_tool(
     cwd = tool_input.get("cwd", default_cwd)
 
     if tool_name == "shell_run":
-        r = shell.run(tool_input["command"], cwd=cwd)
+        raw_timeout = tool_input.get("timeout")
+        timeout = min(int(raw_timeout), _MAX_SHELL_TIMEOUT) if raw_timeout is not None else 30
+        r = shell.run(tool_input["command"], cwd=cwd, timeout=timeout)
         return f"exit_code={r['exit_code']}\nstdout={r['stdout']}\nstderr={r['stderr']}"
     elif tool_name == "file_write":
         r = shell.write_file(tool_input["path"], tool_input["content"])
@@ -259,9 +262,13 @@ def format_response(text: str, tool_calls_made: list) -> dict:
     is_long = len(display) >= 150
     if has_code or is_long:
         plain = display.split("```")[0].strip()
-        first = plain.split(".")[0].strip()
+        # Find the first sentence boundary: sentence-ending punctuation followed by a
+        # space and an uppercase letter, but only when the period is NOT preceded by a
+        # digit (avoids splitting version numbers like "3.5" or "Python 3.11.2").
+        m = re.search(r'(?<!\d)([.!?])\s+(?=[A-Z])', plain)
+        first = plain[:m.end(1)].strip() if m else plain
         if 10 < len(first) <= 140:
-            speak = first + "."
+            speak = first
         elif 0 < len(plain) <= 140:
             speak = plain
         else:

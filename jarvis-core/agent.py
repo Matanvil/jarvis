@@ -63,6 +63,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "command": {"type": "string", "description": "The shell command to run"},
                 "cwd": {"type": "string", "description": "Working directory (optional, defaults to active project)"},
+                "timeout": {"type": "integer", "description": "Timeout in seconds (default 30, max 600). Use for long-running builds or test suites."},
             },
             "required": ["command"],
         },

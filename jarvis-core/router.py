@@ -19,6 +19,7 @@ class Router:
 
     def __init__(self, config: dict, guardrails: Guardrails):
         self._config = config
+        self._http_client = httpx.Client(timeout=httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=5.0))
         self._ollama = OllamaAgent(config=config, guardrails=guardrails)
         haiku_model = config.get("models", {}).get("haiku", "claude-haiku-4-5-20251001")
         sonnet_model = config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
@@ -72,27 +73,26 @@ class Router:
         return float(self._config.get("ollama", {}).get("timeout_seconds", 30))
 
     def _classify(self, text: str) -> dict:
-        """Ask Ollama to classify intent. Returns classification dict.
+        """Ask the classifier to classify intent. Returns classification dict.
         Raises on any error — caller handles gracefully."""
-        with httpx.Client(timeout=httpx.Timeout(connect=5.0, read=self._ollama_timeout, write=30.0, pool=5.0)) as client:
-            resp = client.post(
-                f"{self._classifier_host}/v1/chat/completions",
-                json={
-                    "model": self._classifier_model,
-                    "messages": [
-                        {"role": "system", "content": CLASSIFY_SYSTEM_PROMPT},
-                        {"role": "user", "content": text},
-                    ],
-                    "chat_template_kwargs": {"enable_thinking": False},
-                },
-            )
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"] or ""
-            # Extract JSON robustly — model may wrap output in tags or non-Latin text
-            start, end = content.find("{"), content.rfind("}")
-            if start == -1 or end == -1:
-                raise ValueError(f"No JSON object found in classifier response: {content!r}")
-            return json.loads(content[start:end + 1])
+        resp = self._http_client.post(
+            f"{self._classifier_host}/v1/chat/completions",
+            json={
+                "model": self._classifier_model,
+                "messages": [
+                    {"role": "system", "content": CLASSIFY_SYSTEM_PROMPT},
+                    {"role": "user", "content": text},
+                ],
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"] or ""
+        # Extract JSON robustly — model may wrap output in tags or non-Latin text
+        start, end = content.find("{"), content.rfind("}")
+        if start == -1 or end == -1:
+            raise ValueError(f"No JSON object found in classifier response: {content!r}")
+        return json.loads(content[start:end + 1])
 
     def resume(self, command_id: str, step_callback=None) -> dict | None:
         """Continue a run paused for approval. Returns the annotated final result,
@@ -241,10 +241,6 @@ class Router:
         assistant_text = result.get("display") or result.get("speak") or ""
         if not assistant_text:
             return
-        steps = result.get("steps") or []
-        if steps:
-            tools_used = ", ".join(s["tool"] for s in steps)
-            assistant_text = f"{assistant_text}\n\n[Tools used: {tools_used}]"
         self._history.extend([
             {"role": "user", "content": user_text},
             {"role": "assistant", "content": assistant_text},

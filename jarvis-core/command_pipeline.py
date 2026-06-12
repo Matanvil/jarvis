@@ -1,3 +1,4 @@
+import threading
 import time
 import uuid
 import logging
@@ -40,7 +41,7 @@ class CommandPipeline:
         self._router = router
         self._memory = memory
         self._registry: dict[str, JarvisCommand] = {}
-        self._executing: bool = False
+        self._lock = threading.Lock()
         self._current_command_id: str | None = None
         self._logger = logging.getLogger("jarvis.commands")
 
@@ -68,12 +69,11 @@ class CommandPipeline:
         """Submit a command. Returns busy response if another command is executing.
         command_id, when given, is the correlation id used to key a paused run so it
         can be resumed after approval (see resume())."""
-        if self._executing:
+        if not self._lock.acquire(blocking=False):
             return {"busy": True, "command_id": self._current_command_id}
 
         cmd = self._create_command(text, cwd, source)
         self._register(cmd)
-        self._executing = True
         self._current_command_id = cmd.id
 
         # Load project memory context
@@ -105,22 +105,21 @@ class CommandPipeline:
             cmd.completed_at = time.time()
             raise
         finally:
-            self._executing = False
             self._current_command_id = None
+            self._lock.release()
 
     def resume(self, command_id: str, step_callback=None) -> dict | None:
         """Continue a run paused for approval, under the single-command lock.
         Returns the final result, None if there is no paused run (caller falls back
         to replay), or a busy response if another command is executing."""
-        if self._executing:
+        if not self._lock.acquire(blocking=False):
             return {"busy": True, "command_id": self._current_command_id}
-        self._executing = True
         self._current_command_id = command_id
         try:
             return self._router.resume(command_id, step_callback=step_callback)
         finally:
-            self._executing = False
             self._current_command_id = None
+            self._lock.release()
 
     def cancel(self, command_id: str) -> dict:
         """Cancel an executing command and release the lock."""
@@ -130,8 +129,9 @@ class CommandPipeline:
         cmd.status = CommandStatus.CANCELLED
         cmd.completed_at = time.time()
         if self._current_command_id == command_id:
-            self._executing = False
             self._current_command_id = None
+            if self._lock.locked():
+                self._lock.release()
         return {"cancelled": True, "command_id": command_id}
 
     def reset_conversation(self) -> None:
@@ -140,8 +140,9 @@ class CommandPipeline:
 
     def abort(self) -> dict:
         """Force-release the lock unconditionally. Emergency escape hatch."""
-        self._executing = False
         self._current_command_id = None
+        if self._lock.locked():
+            self._lock.release()
         return {"lock_released": True}
 
     def get(self, command_id: str) -> JarvisCommand | None:

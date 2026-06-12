@@ -1,4 +1,4 @@
-import requests
+import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus
 
@@ -18,7 +18,7 @@ class WebTool:
     def _brave_search(self, query: str, num_results: int) -> list[dict]:
         url = "https://api.search.brave.com/res/v1/web/search"
         headers = {"Accept": "application/json", "X-Subscription-Token": self._brave_key}
-        resp = requests.get(url, params={"q": query, "count": num_results}, headers=headers, timeout=10)
+        resp = httpx.get(url, params={"q": query, "count": num_results}, headers=headers, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         results = data.get("web", {}).get("results", [])
@@ -27,7 +27,7 @@ class WebTool:
     def _ddg_search(self, query: str, num_results: int) -> list[dict]:
         url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
         headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = httpx.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
         results = []
@@ -41,10 +41,10 @@ class WebTool:
             })
         return results
 
-    def fetch_page(self, url: str, max_chars: int = 4000) -> dict:
+    def fetch_page(self, url: str, max_chars: int = 20000) -> dict:
         try:
             headers = {"User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, headers=headers, timeout=15)
+            resp = httpx.get(url, headers=headers, timeout=15)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
             for tag in soup(["script", "style", "nav", "footer", "header"]):
