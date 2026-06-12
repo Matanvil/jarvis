@@ -87,12 +87,16 @@ def execute_tool(
     default_cwd: str | None = None,
     local_agent=None,
     coding=None,
+    mcp_manager=None,
 ) -> str:
     """Dispatch a tool call. Raises ApprovalRequiredError if guardrails block it."""
     if tool_name == "shell_run":
         category = _shell_guardrail_category(tool_input.get("command", ""))
     elif tool_name == "run_code":
         category = _code_guardrail_category(tool_input.get("code", ""))
+    elif mcp_manager and mcp_manager.is_mcp_tool(tool_name):
+        server, _ = mcp_manager.parse_mcp_tool_name(tool_name)
+        category = mcp_manager.guardrail_category(server)
     else:
         category = TOOL_TO_GUARDRAIL_CATEGORY.get(tool_name, "run_shell")
     description = f"{tool_name}: {tool_input}"
@@ -233,6 +237,11 @@ def execute_tool(
             if issue.get("recommendation"):
                 lines.append(f"  → {issue['recommendation']}")
         return "\n".join(lines)
+    if mcp_manager and mcp_manager.is_mcp_tool(tool_name):
+        server, bare_tool = mcp_manager.parse_mcp_tool_name(tool_name)
+        return mcp_manager.call_tool(server, bare_tool, tool_input)
+    if mcp_manager is None and tool_name.startswith("mcp__"):
+        return f"error: MCP tool '{tool_name}' called but no MCP manager is configured"
     return f"unknown tool: {tool_name}"
 
 

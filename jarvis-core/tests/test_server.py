@@ -757,3 +757,31 @@ async def test_command_bg_error_dispatches_error_event():
         # Queue should have an error event
         event = dispatcher.queue.get_nowait()
         assert event["type"] == "error"
+
+
+# ── MCP wiring in load_dependencies ──────────────────────────────────────────
+
+def test_load_dependencies_passes_mcp_manager_to_router(tmp_path, monkeypatch):
+    """load_dependencies creates MCPManager from config and passes it to Router."""
+    from tools.mcp import MCPManager
+    import config as cfg_module
+    monkeypatch.setattr(cfg_module, "CONFIG_PATH", tmp_path / "config.json")
+    (tmp_path / "config.json").write_text('{"mcp_servers": []}')
+
+    captured = {}
+
+    import router as router_module
+    OriginalRouter = router_module.Router
+
+    class SpyRouter(OriginalRouter):
+        def __init__(self, **kwargs):
+            captured["mcp_manager"] = kwargs.get("mcp_manager")
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(router_module, "Router", SpyRouter)
+
+    import server as srv
+    monkeypatch.setattr(srv, "Router", SpyRouter)
+
+    srv.load_dependencies()
+    assert isinstance(captured.get("mcp_manager"), MCPManager)

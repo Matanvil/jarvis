@@ -759,3 +759,30 @@ def test_coding_agent_passed_to_execute_tool(agent):
             agent.run("What is agent.py?", cwd="/p")
 
     assert captured.get("coding") is agent._coding
+
+
+# ── MCP dynamic tool injection ────────────────────────────────────────────────
+
+def test_ollama_agent_includes_mcp_tools_in_tool_list():
+    from tools.mcp import MCPManager
+    a = OllamaAgent({"anthropic_api_key": "x", "brave_api_key": None}, Guardrails({}))
+    mgr = MCPManager([{"name": "fs", "command": "npx", "args": [], "transport": "stdio"}])
+    t = MagicMock()
+    t.name = "read_file"
+    t.description = "Read"
+    t.inputSchema = {"type": "object", "properties": {}}
+    mgr._inject_tools("fs", [t])
+    a._mcp_manager = mgr
+    tools = a._build_tool_list()
+    names = [tool["function"]["name"] for tool in tools]
+    assert "mcp__fs__read_file" in names
+    assert "shell_run" in names
+
+
+def test_ollama_agent_build_tool_list_without_mcp_returns_only_builtins():
+    a = OllamaAgent({"anthropic_api_key": "x", "brave_api_key": None}, Guardrails({}))
+    a._mcp_manager = None
+    tools = a._build_tool_list()
+    names = [tool["function"]["name"] for tool in tools]
+    assert "shell_run" in names
+    assert not any(n.startswith("mcp__") for n in names)
