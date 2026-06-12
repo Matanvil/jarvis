@@ -217,6 +217,107 @@ def test_ensure_mlx_server_running_skips_when_executor_uses_ollama_host(client_a
     mock_popen.assert_not_called()
 
 
+def test_ensure_classifier_server_running_skips_when_uses_ollama_host(client_and_agent):
+    import server as srv
+
+    cfg = {
+        "ollama": {
+            "host": "http://localhost:11434",
+            "classifier_host": "http://localhost:11434",
+            "classifier_model": "some-model",
+        }
+    }
+    with patch("server.subprocess.Popen") as mock_popen:
+        srv._ensure_classifier_server_running(cfg)
+    mock_popen.assert_not_called()
+
+
+def test_ensure_classifier_server_running_starts_server_without_adapter(client_and_agent):
+    import server as srv
+
+    cfg = {
+        "ollama": {
+            "host": "http://localhost:11434",
+            "classifier_host": "http://127.0.0.1:8090",
+            "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+            "classifier_adapter_path": "",
+        }
+    }
+    with patch("server.httpx.get", side_effect=Exception("not running")), \
+         patch("server.shutil.which", return_value="/usr/local/bin/mlx_lm.server"), \
+         patch("server.subprocess.Popen") as mock_popen:
+        srv._ensure_classifier_server_running(cfg)
+
+    call_args = mock_popen.call_args[0][0]
+    assert "--model" in call_args
+    assert "mlx-community/Qwen3-4B-Instruct-2507-4bit" in call_args
+    assert "--port" in call_args
+    assert "8090" in call_args
+    assert "--adapter-path" not in call_args
+
+
+def test_ensure_classifier_server_running_includes_adapter_path_when_configured(client_and_agent, tmp_path):
+    import server as srv
+
+    adapter_path = str(tmp_path / "classifier_adapters")
+    (tmp_path / "classifier_adapters").mkdir()
+
+    cfg = {
+        "ollama": {
+            "host": "http://localhost:11434",
+            "classifier_host": "http://127.0.0.1:8090",
+            "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+            "classifier_adapter_path": adapter_path,
+        }
+    }
+    with patch("server.httpx.get", side_effect=Exception("not running")), \
+         patch("server.shutil.which", return_value="/usr/local/bin/mlx_lm.server"), \
+         patch("server.subprocess.Popen") as mock_popen:
+        srv._ensure_classifier_server_running(cfg)
+
+    call_args = mock_popen.call_args[0][0]
+    assert "--adapter-path" in call_args
+    assert adapter_path in call_args
+
+
+def test_ensure_classifier_server_running_skips_adapter_path_when_dir_missing(client_and_agent, tmp_path):
+    import server as srv
+
+    cfg = {
+        "ollama": {
+            "host": "http://localhost:11434",
+            "classifier_host": "http://127.0.0.1:8090",
+            "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+            "classifier_adapter_path": str(tmp_path / "nonexistent_adapters"),
+        }
+    }
+    with patch("server.httpx.get", side_effect=Exception("not running")), \
+         patch("server.shutil.which", return_value="/usr/local/bin/mlx_lm.server"), \
+         patch("server.subprocess.Popen") as mock_popen:
+        srv._ensure_classifier_server_running(cfg)
+
+    call_args = mock_popen.call_args[0][0]
+    assert "--adapter-path" not in call_args
+
+
+def test_ensure_classifier_server_running_skips_if_already_running(client_and_agent):
+    import server as srv
+
+    cfg = {
+        "ollama": {
+            "host": "http://localhost:11434",
+            "classifier_host": "http://127.0.0.1:8090",
+            "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+        }
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    with patch("server.httpx.get", return_value=mock_resp), \
+         patch("server.subprocess.Popen") as mock_popen:
+        srv._ensure_classifier_server_running(cfg)
+    mock_popen.assert_not_called()
+
+
 def test_approve_resumed_run_logs_analytics(client_and_agent):
     import approval_store
     import logger as logger_module

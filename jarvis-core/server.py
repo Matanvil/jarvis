@@ -111,12 +111,54 @@ def _ensure_mlx_server_running(config: dict) -> None:
     logging.info("[Jarvis] mlx_lm.server started: model=%s port=%d", executor_model, port)
 
 
+def _ensure_classifier_server_running(config: dict) -> None:
+    """Start mlx_lm.server for the classifier if it runs on a separate host and isn't already up."""
+    ollama_cfg = config.get("ollama", {})
+    base_host = ollama_cfg.get("host", "http://localhost:11434")
+    classifier_host = ollama_cfg.get("classifier_host", "")
+    classifier_model = ollama_cfg.get("classifier_model", "")
+    if not classifier_host or not classifier_model:
+        return
+    if classifier_host == base_host:
+        return  # classifier is on Ollama, no MLX server needed
+
+    try:
+        r = httpx.get(f"{classifier_host}/v1/models", timeout=2)
+        if r.status_code < 500:
+            return  # already running
+    except Exception:
+        pass  # not running — start it
+
+    mlx_bin = (
+        shutil.which("mlx_lm.server")
+        or (p if (p := "/opt/homebrew/bin/mlx_lm.server") and os.path.exists(p) else None)
+    )
+    if not mlx_bin:
+        logging.warning("[Jarvis] mlx_lm.server binary not found — skipping classifier auto-start")
+        return
+
+    from urllib.parse import urlparse
+    parsed = urlparse(classifier_host)
+    port = parsed.port or 8090
+
+    cmd = [mlx_bin, "--model", classifier_model, "--port", str(port)]
+
+    adapter_path = ollama_cfg.get("classifier_adapter_path", "")
+    if adapter_path and os.path.exists(adapter_path):
+        cmd += ["--adapter-path", adapter_path]
+
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    logging.info("[Jarvis] mlx_lm.server (classifier) started: model=%s port=%d adapter=%s",
+                 classifier_model, port, adapter_path or "none")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
     config = cfg_module.load()
     _ensure_ollama_running()
     _ensure_mlx_server_running(config)
+    _ensure_classifier_server_running(config)
     alert_bus.set_loop(asyncio.get_running_loop())
     _pipeline, _loggers, _guardrails, store = load_dependencies()
     scheduler = Scheduler(store=store, pipeline=_pipeline)

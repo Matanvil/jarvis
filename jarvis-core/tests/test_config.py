@@ -171,3 +171,18 @@ def test_step_voice_default_is_false():
     """narration.step_voice defaults to False."""
     from config import DEFAULTS
     assert DEFAULTS["narration"]["step_voice"] is False
+
+
+def test_classifier_adapter_path_default_is_empty():
+    from config import DEFAULTS
+    assert DEFAULTS["ollama"]["classifier_adapter_path"] == ""
+
+
+def test_classifier_adapter_path_loads_from_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("config.CONFIG_PATH", tmp_path / "config.json")
+    (tmp_path / "config.json").write_text(json.dumps({
+        "ollama": {"classifier_adapter_path": "/some/adapter"}
+    }))
+    cfg = config.load()
+    assert cfg["ollama"]["classifier_adapter_path"] == "/some/adapter"
+    assert cfg["ollama"]["classifier_host"] == "http://127.0.0.1:8090"  # default preserved

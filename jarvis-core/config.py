@@ -36,6 +36,7 @@ DEFAULTS = {
         "executor_chat_template_kwargs": {"enable_thinking": False},
         "classifier_host": "http://127.0.0.1:8090",
         "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+        "classifier_adapter_path": "",
     },
     "reasoning": {
         "max_steps_claude": 10,
