@@ -25,6 +25,8 @@ class MCPManager:
         self._configs: dict[str, dict] = {c["name"]: c for c in server_configs}
         self._sessions: dict[str, ClientSession] = {}
         self._tools: dict[str, list[dict]] = {}  # server_name → list of OpenAI-shaped schemas
+        self._transport_cms: dict[str, object] = {}   # keep stdio_client CMs alive
+        self._session_cms: dict[str, object] = {}     # keep ClientSession CMs alive
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
 
@@ -103,6 +105,8 @@ class MCPManager:
         """Disconnect all sessions and clear state."""
         self._sessions.clear()
         self._tools.clear()
+        self._transport_cms.clear()
+        self._session_cms.clear()
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
 
@@ -159,12 +163,17 @@ class MCPManager:
             env={k: str(v) for k, v in merged_env.items()},
         )
 
-        read, write = await stdio_client(params).__aenter__()
-        session = ClientSession(read, write)
-        await session.__aenter__()
-        await session.initialize()
+        # Store context managers so the subprocess and session stay alive.
+        transport_cm = stdio_client(params)
+        read, write = await transport_cm.__aenter__()
+        self._transport_cms[name] = transport_cm
 
-        result = await session.list_tools()
-        self._sessions[name] = session
+        session_cm = ClientSession(read, write)
+        await session_cm.__aenter__()
+        self._session_cms[name] = session_cm
+
+        await session_cm.initialize()
+        result = await session_cm.list_tools()
+        self._sessions[name] = session_cm
         self._inject_tools(name, result.tools)
         _log.info("[MCP] Connected to '%s': %d tool(s) registered", name, len(result.tools))

@@ -806,6 +806,28 @@ def github_client(tmp_path, monkeypatch):
     srv._guardrails = None
 
 
+def test_gh_auth_status_parses_hosts_json(monkeypatch):
+    import server as srv
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/gh")
+    hosts_json = '{"hosts":{"github.com":[{"state":"success","active":true,"login":"Matanvil"}]}}'
+    mock_result = MagicMock(returncode=0, stdout=hosts_json)
+    with patch("server.subprocess.run", return_value=mock_result):
+        status = srv._gh_auth_status()
+    assert status == {"installed": True, "authenticated": True, "user": "Matanvil"}
+
+
+def test_gh_auth_status_no_active_account(monkeypatch):
+    import server as srv
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/gh")
+    hosts_json = '{"hosts":{"github.com":[{"state":"success","active":false,"login":"Matanvil"}]}}'
+    mock_result = MagicMock(returncode=0, stdout=hosts_json)
+    with patch("server.subprocess.run", return_value=mock_result):
+        status = srv._gh_auth_status()
+    assert status["authenticated"] is False
+
+
 def test_github_status_gh_not_installed(github_client, monkeypatch):
     import server as srv
     monkeypatch.setattr(srv, "_gh_auth_status", lambda: {"installed": False, "authenticated": False, "user": None})

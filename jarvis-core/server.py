@@ -654,14 +654,16 @@ def _gh_auth_status() -> dict:
     if not shutil.which("gh"):
         return {"installed": False, "authenticated": False, "user": None}
     try:
-        r = subprocess.run(["gh", "auth", "status", "--json", "activeAccount"],
+        r = subprocess.run(["gh", "auth", "status", "--json", "hosts"],
                            capture_output=True, text=True)
         if r.returncode != 0:
             return {"installed": True, "authenticated": False, "user": None}
-        import json as _json
-        data = _json.loads(r.stdout)
-        user = data.get("activeAccount", {}).get("login") if isinstance(data, dict) else None
-        return {"installed": True, "authenticated": True, "user": user}
+        data = json.loads(r.stdout)
+        accounts = data.get("hosts", {}).get("github.com", [])
+        active = next((a for a in accounts if a.get("active")), None)
+        if not active:
+            return {"installed": True, "authenticated": False, "user": None}
+        return {"installed": True, "authenticated": True, "user": active.get("login")}
     except Exception:
         return {"installed": True, "authenticated": False, "user": None}
 
