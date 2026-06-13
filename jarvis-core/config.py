@@ -40,16 +40,9 @@ DEFAULTS = {
         "classifier_adapter_path": "",
     },
     "reasoning": {
-        "max_steps_claude": 10,
-        "max_steps_ollama": 10,
-        "max_total_steps": 20,
+        "max_steps_claude": 15,
+        "max_steps_ollama": 15,
         "stall_detection": True,
-        "step_budgets": {
-            "read_only": 5,
-            "prepare": 8,
-            "destructive": 10,
-            "complex_reasoning": 10,
-        },
     },
     "narration": {
         "mode": "milestones",   # milestones | all | silent

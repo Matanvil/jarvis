@@ -401,6 +401,14 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             viewModel.finalizeTurn(response: "Error: \(msg)")
             showHUD(.response(text: msg))
             speak(msg)
+        case "compacted":
+            let msg = event["message"] as? String ?? "Context compacted."
+            showHUD(.response(text: msg))
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self else { return }
+                self.showHUD(.hidden)
+            }
         default:
             break
         }

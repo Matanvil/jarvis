@@ -327,88 +327,10 @@ def test_finalize_tool_stops_before_step_limit(agent):
     assert len(result["steps"]) == 2
 
 
-# ── intent-class based step budgets ──────────────────────────────────────────
+# ── max_steps_ollama controls step limit ──────────────────────────────────────
 
-def test_read_only_intent_uses_lower_step_budget(agent):
-    """read_only intent_class uses step_budgets.read_only (5) not max_steps_ollama (10)."""
-    call_count = [0]
-    commands = [f"ls /dir{i}" for i in range(20)]
-
-    def fake_post(url, json=None, **kwargs):
-        call_count[0] += 1
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        if json and json.get("tool_choice") == "none":
-            resp.json.return_value = {"choices": [{"finish_reason": "stop",
-                                                    "message": {"content": "Done."}}]}
-        else:
-            cmd = commands[call_count[0] % len(commands)]
-            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
-                "content": None,
-                "tool_calls": [{"id": f"c{call_count[0]}", "function": {
-                    "name": "shell_run", "arguments": f'{{"command": "{cmd}"}}'
-                }}]
-            }}]}
-        return resp
-
-    agent._config["reasoning"]["max_steps_ollama"] = 10
-    agent._config["reasoning"]["step_budgets"] = {
-        "read_only": 5, "prepare": 8, "destructive": 10, "complex_reasoning": 10
-    }
-    with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", return_value="ok"):
-            agent.run("list files", intent_class="read_only")
-
-    # 5 tool calls + 1 salvage = ≤ 7 total API calls
-    assert call_count[0] <= 7
-
-
-def test_destructive_intent_uses_higher_step_budget(agent):
-    """destructive intent_class uses step_budgets.destructive (10), not read_only (3)."""
-    call_count = [0]
-    # Alternate tools so near-duplicate detection (same tool ≥ 3 times) doesn't fire
-    tools_cycle = ["shell_run", "file_read", "shell_run", "file_read",
-                   "shell_run", "file_read", "shell_run", "file_read",
-                   "shell_run", "file_read", "shell_run"]
-    args_cycle = [
-        '{"command": "rm /tmp/a"}', '{"path": "/tmp/a.log"}',
-        '{"command": "rm /tmp/b"}', '{"path": "/tmp/b.log"}',
-        '{"command": "rm /tmp/c"}', '{"path": "/tmp/c.log"}',
-        '{"command": "rm /tmp/d"}', '{"path": "/tmp/d.log"}',
-        '{"command": "rm /tmp/e"}', '{"path": "/tmp/e.log"}',
-        '{"command": "rm /tmp/f"}',
-    ]
-
-    def fake_post(url, json=None, **kwargs):
-        call_count[0] += 1
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        if json and json.get("tool_choice") == "none":
-            resp.json.return_value = {"choices": [{"finish_reason": "stop",
-                                                    "message": {"content": "Deleted."}}]}
-        else:
-            idx = (call_count[0] - 1) % len(tools_cycle)
-            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
-                "content": None,
-                "tool_calls": [{"id": f"c{call_count[0]}", "function": {
-                    "name": tools_cycle[idx], "arguments": args_cycle[idx]
-                }}]
-            }}]}
-        return resp
-
-    agent._config["reasoning"]["step_budgets"] = {
-        "read_only": 3, "prepare": 8, "destructive": 10, "complex_reasoning": 10
-    }
-    with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", return_value="ok"):
-            agent.run("delete temp files", intent_class="destructive")
-
-    # destructive budget=10 → more API calls than read_only budget=3 would allow (4 max)
-    assert call_count[0] > 4
-
-
-def test_no_intent_class_uses_max_steps_ollama(agent):
-    """Without intent_class, falls back to max_steps_ollama."""
+def test_max_steps_ollama_controls_step_limit(agent):
+    """max_steps_ollama limits total tool calls regardless of intent_class."""
     call_count = [0]
     commands = [f"ls /dir{i}" for i in range(20)]
 
@@ -430,13 +352,12 @@ def test_no_intent_class_uses_max_steps_ollama(agent):
         return resp
 
     agent._config["reasoning"]["max_steps_ollama"] = 3
-    agent._config["reasoning"]["step_budgets"] = {"read_only": 1}
     with patch.object(agent._http_client, "post", side_effect=fake_post):
         with patch("ollama_agent.execute_tool", return_value="ok"):
-            agent.run("do something")  # no intent_class → uses max_steps_ollama=3
+            agent.run("do something")
 
-    # 3 tool calls + 1 salvage = ≤ 5 total; more than 1 (which read_only budget would give)
-    assert call_count[0] > 2
+    # 3 tool calls + salvage = ≤ 5 total API calls
+    assert call_count[0] <= 5
 
 
 def test_finalize_tool_is_in_ollama_tools_schema(agent):
@@ -817,3 +738,62 @@ def test_ollama_agent_passes_mcp_manager_to_execute_tool():
             a.run("list issues")
 
     assert captured.get("mcp_manager") is mgr
+
+
+# ── Task 12: result_summary cap and wrap-up nudge ─────────────────────────────
+
+def test_ollama_result_summary_capped_at_200_chars(agent):
+    long_result = "y" * 300
+    tool_resp = _tool_response("shell_run", {"command": "ls"})
+    stop_resp = _stop_response("Done.")
+
+    responses = [tool_resp, stop_resp]
+    idx = [0]
+    def fake_post(url, json=None, **kwargs):
+        r = responses[idx[0]]; idx[0] += 1; return r
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.execute_tool", return_value=long_result):
+                result = agent.run("list files")
+
+    assert len(result["steps"][0]["result_summary"]) <= 200
+
+
+def test_ollama_wrap_up_nudge_injected_near_step_limit(agent):
+    agent._config["reasoning"]["max_steps_ollama"] = 5
+    agent._config["reasoning"]["stall_detection"] = False  # avoid near-dup terminating early
+    call_payloads = []
+    # Alternate tool names to also avoid near-duplicate detection
+    tools_cycle = ["shell_run", "file_read", "shell_run", "file_read"]
+
+    def fake_post(url, json=None, **kwargs):
+        call_payloads.append(json)
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        n = len(call_payloads)
+        if n >= 4:
+            resp.json.return_value = {"choices": [{"finish_reason": "stop",
+                                                    "message": {"content": "Done.", "tool_calls": None}}]}
+        else:
+            tool_name = tools_cycle[(n - 1) % len(tools_cycle)]
+            args = f'{{"command": "ls /tmp/{n}"}}' if tool_name == "shell_run" else f'{{"path": "/tmp/{n}.txt"}}'
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": f"c{n}", "function": {"name": tool_name, "arguments": args}}]
+            }}]}
+        return resp
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.execute_tool", return_value="ok"):
+                agent.run("do stuff")
+
+    assert len(call_payloads) >= 4
+    nudge_found = any(
+        "approaching your step limit" in (m.get("content") or "")
+        for m in call_payloads[3]["messages"]
+    )
+    assert nudge_found, "wrap-up nudge not found in 4th API call's messages"

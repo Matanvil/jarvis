@@ -278,11 +278,7 @@ class OllamaAgent:
         if memory_context:
             system_msg += f"\nProject memory: {memory_context}\n"
 
-        budgets = self._config.get("reasoning", {}).get("step_budgets", {})
-        if intent_class and intent_class in budgets:
-            max_steps = int(budgets[intent_class])
-        else:
-            max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 10))
+        max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 15))
 
         state = _OllamaLoopState(
             messages=[
@@ -316,8 +312,20 @@ class OllamaAgent:
 
     def _outer_loop(self, state: "_OllamaLoopState", step_callback) -> dict:
         url = f"{self._host}/v1/chat/completions"
+        wrap_up_step = state.max_steps - 2
         try:
             while state.steps_used < state.max_steps:
+                if state.steps_used >= wrap_up_step:
+                    nudge = (
+                        "You are approaching your step limit. Based on everything you have found so far, "
+                        "call finalize() now with your best answer — include what you discovered and what "
+                        "still needs to be done if the task isn't complete."
+                    )
+                    last_content = state.messages[-1].get("content") if state.messages else None
+                    already_nudged = isinstance(last_content, str) and "approaching your step limit" in last_content
+                    if not already_nudged:
+                        state.messages.append({"role": "user", "content": nudge})
+
                 state.steps_used += 1
                 payload = {"model": self._model, "messages": state.messages, "tools": self._build_tool_list()}
                 if self._chat_template_kwargs:
@@ -447,7 +455,7 @@ class OllamaAgent:
                 step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
             try:
                 result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=self._coding, mcp_manager=self._mcp_manager)
-                step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
+                step["result_summary"] = result[:200] if isinstance(result, str) else str(result)[:200]
                 state.tool_calls_made.append(name)
             except ApprovalRequiredError as e:
                 # Revert this call's loop-state effects so resume re-processes it cleanly.

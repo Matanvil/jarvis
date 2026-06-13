@@ -444,3 +444,101 @@ def test_classify_reuses_shared_http_client(config):
     r = Router(config=config, guardrails=guardrails)
     assert hasattr(r, "_http_client"), "Router must have a shared _http_client"
     assert r._http_client is not None
+
+
+# ── Task 9: _append_turn, compaction, classifier context ─────────────────────
+
+def test_append_turn_stores_compressed_steps(haiku_router):
+    result = {
+        "speak": "Done.",
+        "display": "Done with details.",
+        "steps": [
+            {"tool": "shell_run", "input_summary": "git log --oneline", "result_summary": "abc1234 fix: prevent crash"},
+            {"tool": "file_read", "input_summary": "/tmp/x.py", "result_summary": "def main(): pass"},
+        ],
+    }
+    haiku_router._append_turn("show me the log", result)
+    assistant_content = haiku_router._history[-1]["content"]
+    assert "shell_run" in assistant_content
+    assert "abc1234 fix: prevent crash" in assistant_content
+    assert "file_read" in assistant_content
+
+
+def test_append_turn_skips_approval_required(haiku_router):
+    result = {"approval_required": {"tool": "shell_run"}, "steps": []}
+    haiku_router._append_turn("delete stuff", result)
+    assert haiku_router._history == []
+
+
+def test_append_turn_no_steps_stores_display_text(haiku_router):
+    result = {"speak": "Hi there!", "display": "Hi there!", "steps": []}
+    haiku_router._append_turn("hello", result)
+    assert haiku_router._history[-1]["content"] == "Hi there!"
+
+
+def test_classify_receives_history_context(config):
+    config["ollama"]["routing_mode"] = "local_first"
+    guardrails = Guardrails(config)
+    r = Router(config=config, guardrails=guardrails)
+    history = [
+        {"role": "user", "content": "check CI"},
+        {"role": "assistant", "content": "CI is failing on test_foo"},
+    ]
+    captured = {}
+
+    def fake_post(url, json=None, **kwargs):
+        captured["json"] = json
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {"choices": [{"message": {"content": '{"intent_class":"prepare","can_handle_locally":true}'}}]}
+        return resp
+
+    with patch.object(r._http_client, "post", side_effect=fake_post):
+        r._classify("yes please", history=history)
+
+    messages = captured["json"]["messages"]
+    roles = [m["role"] for m in messages]
+    assert roles == ["system", "user", "assistant", "user"]
+    assert messages[-1]["content"] == "yes please"
+
+
+def test_compact_fires_when_tokens_exceed_threshold(haiku_router):
+    large_content = "x" * 20001  # ~5000 tokens
+    haiku_router._history = [
+        {"role": "user", "content": large_content},
+        {"role": "assistant", "content": "response"},
+    ]
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text="Compact summary of the session.")]
+
+    with patch.object(haiku_router._anthropic_client.messages, "create", return_value=mock_response):
+        haiku_router._append_turn("another command", {"speak": "ok", "display": "ok", "steps": []})
+
+    assert len(haiku_router._history) == 2
+    assert haiku_router._history[0]["content"] == "[Prior conversation compacted]"
+    assert "Compact summary" in haiku_router._history[1]["content"]
+    assert haiku_router._pending_compaction_notice is True
+
+
+def test_compact_best_effort_on_failure(haiku_router):
+    haiku_router._history = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "world"},
+    ]
+    original_history = list(haiku_router._history)
+    with patch.object(haiku_router._anthropic_client.messages, "create", side_effect=Exception("network error")):
+        haiku_router._compact()
+
+    assert haiku_router._history == original_history
+    assert haiku_router._pending_compaction_notice is False
+
+
+def test_compaction_notice_emitted_on_next_process(haiku_router, mock_haiku_agent):
+    haiku_router._pending_compaction_notice = True
+    events = []
+    mock_haiku_agent.run.return_value = {"speak": "ok", "display": "ok", "steps": []}
+    with patch.object(haiku_router, "_classify", return_value={"intent_class": "read_only", "can_handle_locally": True}):
+        haiku_router.process("do something", step_callback=events.append)
+
+    assert any(e.get("type") == "compacted" for e in events)
+    assert haiku_router._pending_compaction_notice is False
