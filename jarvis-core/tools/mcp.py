@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import shutil
 import subprocess
 import threading
 
@@ -113,11 +114,16 @@ class MCPManager:
     def _resolve_env(self, cfg: dict) -> dict:
         """Build the env dict for a server, resolving auth helpers if needed."""
         base = {**os.environ, **(cfg.get("env") or {})}
+        # Augment PATH with Homebrew locations — GUI-launched processes on macOS
+        # inherit a minimal PATH that omits /opt/homebrew/bin and /usr/local/bin.
+        _extra = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin"
+        base["PATH"] = _extra + ":" + base.get("PATH", "")
         auth = cfg.get("auth")
         if auth == "gh_cli":
+            gh_path = shutil.which("gh", path=base["PATH"]) or "gh"
             try:
                 result = subprocess.run(
-                    ["gh", "auth", "token"],
+                    [gh_path, "auth", "token"],
                     capture_output=True, text=True,
                 )
             except FileNotFoundError:
@@ -157,8 +163,11 @@ class MCPManager:
 
         merged_env = self._resolve_env(cfg)
 
+        raw_cmd = cfg["command"]
+        command = shutil.which(raw_cmd, path=merged_env.get("PATH", "")) or raw_cmd
+
         params = StdioServerParameters(
-            command=cfg["command"],
+            command=command,
             args=cfg.get("args", []),
             env={k: str(v) for k, v in merged_env.items()},
         )
