@@ -797,3 +797,50 @@ def test_ollama_wrap_up_nudge_injected_near_step_limit(agent):
         for m in call_payloads[3]["messages"]
     )
     assert nudge_found, "wrap-up nudge not found in 4th API call's messages"
+
+
+# ── planning text nudge ───────────────────────────────────────────────────────
+
+def test_planning_text_triggers_nudge_then_tool_call(agent):
+    """Model returns 'Let me check...' first, then a real tool call after nudge."""
+    from ollama_agent import _is_planning_text
+    assert _is_planning_text("Let me fetch the PR diff.")
+    assert _is_planning_text("I'll check the CI failures for you.")
+    assert not _is_planning_text("Done.")
+    assert not _is_planning_text("Your Downloads folder is empty.")
+
+    responses = [
+        _stop_response("Let me check the CI failures for you."),  # planning text, no tools
+        _tool_response("shell_run", {"command": "gh pr view 38 --json statusCheckRollup"}),
+        _stop_response("CI failed due to missing mcp module."),
+    ]
+    idx = [0]
+    captured_nudge = [False]
+
+    def fake_post(url, json=None, **kwargs):
+        r = responses[idx[0]]; idx[0] += 1; return r
+
+    def fake_step(event):
+        if event.get("type") == "clear":
+            captured_nudge[0] = True
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.execute_tool", return_value="ok"):
+                result = agent.run("check CI", step_callback=fake_step)
+
+    assert captured_nudge[0], "clear SSE event not emitted on nudge"
+    assert result["speak"] == "CI failed due to missing mcp module."
+    assert len(result["steps"]) >= 1
+
+
+def test_planning_text_escalates_after_2_retries(agent):
+    """If the model returns planning text 3 times (0 tool calls), escalate to cloud."""
+    stream_mock = MagicMock(side_effect=ValueError("force fallback"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post",
+                          return_value=_stop_response("Let me check that for you.")):
+            from ollama_agent import EscalateToCloud
+            with pytest.raises(EscalateToCloud):
+                agent.run("check something")

@@ -379,6 +379,9 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             if stepVoice, milestone {
                 speak(label)
             }
+        case "clear":
+            viewModel.clearStreamingBuffer()
+            showHUD(.executing(step: "Working…"))
         case "token":
             let token = event["text"] as? String ?? ""
             if !token.isEmpty {
