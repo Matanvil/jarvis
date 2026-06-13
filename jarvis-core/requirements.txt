@@ -10,3 +10,4 @@ APScheduler==3.10.4
 openai-whisper==20250625
 imageio-ffmpeg==0.6.0
 chromadb>=0.5.0,<1.0.0
+mcp>=1.27.0
