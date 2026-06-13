@@ -356,28 +356,38 @@ class OllamaAgent:
                     if not text and not state.tool_calls_made and finish != "stop":
                         raise EscalateToCloud("Empty response from local executor — server may have crashed")
 
-                    # If this is a genuine final answer (tool calls were made, or it's a
-                    # simple conversational reply that isn't just planning text), return now.
-                    if state.tool_calls_made or not _is_planning_text(text):
+                    # Genuine final answer: text is not planning-intent. Return now.
+                    if not _is_planning_text(text):
                         result = format_response(text, state.tool_calls_made)
                         result["steps"] = state.steps
                         return result
 
-                    # Model returned planning text with no tool calls — nudge it.
+                    # Planning text returned — model wants to continue but didn't call a tool.
+                    # Nudge regardless of whether previous tool calls were made.
                     if state.no_tool_retries < 2:
                         state.no_tool_retries += 1
                         state.steps_used -= 1  # don't burn a step on the nudge
                         state.messages.append({"role": "assistant", "content": text})
-                        nudge = (
-                            "You returned text but made no tool calls. "
-                            "You MUST call the appropriate tool now — do not write a text response."
-                        )
+                        if state.tool_calls_made:
+                            nudge = (
+                                "You've made progress but returned planning text instead of calling a tool. "
+                                "Continue by calling the next tool now — do not write a text response."
+                            )
+                        else:
+                            nudge = (
+                                "You returned text but made no tool calls. "
+                                "You MUST call the appropriate tool now — do not write a text response."
+                            )
                         if step_callback:
                             step_callback({"type": "clear"})
                         state.messages.append({"role": "user", "content": nudge})
                         continue
 
-                    # 2 retries exhausted and still no tool calls — escalate to Claude.
+                    # 2 retries exhausted — if we did useful work, return it; otherwise escalate.
+                    if state.tool_calls_made:
+                        result = format_response(text, state.tool_calls_made)
+                        result["steps"] = state.steps
+                        return result
                     raise EscalateToCloud("Model returned text without tool calls after 2 retries")
 
                 state.messages.append(msg)

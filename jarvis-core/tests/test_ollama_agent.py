@@ -844,3 +844,33 @@ def test_planning_text_escalates_after_2_retries(agent):
             from ollama_agent import EscalateToCloud
             with pytest.raises(EscalateToCloud):
                 agent.run("check something")
+
+
+def test_planning_text_after_tool_calls_triggers_nudge(agent):
+    """Model makes some tool calls, then returns planning text — should get nudged, not exit."""
+    responses = [
+        _tool_response("mcp__github__list_pull_requests", {"owner": "matanvilensky", "repo": "jarvis"}),
+        # After the tool call, model returns planning text instead of next tool or finalize
+        _stop_response("Let me check for PRs in the repo and review the local branch changes."),
+        # After nudge, model calls the corrected tool
+        _tool_response("mcp__github__list_pull_requests", {"owner": "Matanvil", "repo": "jarvis"}),
+        _stop_response("PR #39 is open: feat: Phase E."),
+    ]
+    idx = [0]
+    nudge_fired = [False]
+
+    def fake_post(url, json=None, **kwargs):
+        r = responses[idx[0]]; idx[0] += 1; return r
+
+    def fake_step(event):
+        if event.get("type") == "clear":
+            nudge_fired[0] = True
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.execute_tool", return_value='[{"number":39}]'):
+                result = agent.run("check PRs", step_callback=fake_step)
+
+    assert nudge_fired[0], "clear SSE not emitted when planning text followed tool calls"
+    assert "PR #39" in result["speak"]
