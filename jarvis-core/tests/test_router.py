@@ -1,8 +1,11 @@
+import os
 import pytest
+from datetime import date
 from unittest.mock import MagicMock, patch
 from guardrails import Guardrails
 from ollama_agent import EscalateToCloud
 from router import Router
+from prompt_loader import PromptLoader
 
 
 # ── fixture ───────────────────────────────────────────────────────────────────
@@ -47,7 +50,7 @@ def test_ollama_first_uses_ollama_when_successful(router, mock_ollama_agent, moc
     result = router.process("list Downloads", cwd=None)
     called_kwargs = mock_ollama_agent.run.call_args.kwargs
     assert called_kwargs["cwd"] is None
-    assert called_kwargs["memory_context"] == ""
+    assert "memory_context" not in called_kwargs  # now baked into user_text prefix
     assert isinstance(called_kwargs["history"], list)
     mock_claude_agent.run.assert_not_called()
     assert result["speak"] == "Done locally."
@@ -551,3 +554,87 @@ def test_compaction_notice_emitted_on_next_process(haiku_router, mock_haiku_agen
 
     assert any(e.get("type") == "compacted" for e in events)
     assert haiku_router._pending_compaction_notice is False
+
+
+# ── Task 6: PromptLoader + system prompt + user-message prefix ────────────────
+
+@pytest.fixture
+def mock_prompt_loader(tmp_path):
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    (prompts / "base.md").write_text("base prompt {home}")
+    (prompts / "local.md").write_text("local rules")
+    refs = tmp_path / "refs"
+    projects = tmp_path / "projects"
+    return PromptLoader(prompts_dir=prompts, refs_dir=refs, projects_dir=projects)
+
+
+@pytest.fixture
+def prefix_router(config, mock_prompt_loader):
+    config["ollama"]["routing_mode"] = "local_first"
+    guardrails = Guardrails(config)
+    r = Router(config=config, guardrails=guardrails, prompt_loader=mock_prompt_loader)
+    r._ollama = MagicMock()
+    r._ollama.run.return_value = {"speak": "done", "display": "done", "error": None}
+    r._sonnet = MagicMock()
+    r._classify = MagicMock(return_value={"can_handle_locally": True, "intent_class": "prepare", "reason": "test"})
+    return r
+
+
+def test_user_message_includes_cwd_on_first_call(prefix_router):
+    with patch("router.get_git_context", return_value=None):
+        prefix_router.process("do something", cwd="/some/project")
+    call_kwargs = prefix_router._ollama.run.call_args.kwargs
+    assert "[cwd: /some/project]" in call_kwargs["user_text"]
+
+
+def test_user_message_includes_date(prefix_router):
+    with patch("router.get_git_context", return_value=None):
+        prefix_router.process("do something", cwd="/some/project")
+    call_kwargs = prefix_router._ollama.run.call_args.kwargs
+    assert f"[Date: {date.today()}]" in call_kwargs["user_text"]
+
+
+def test_git_context_injected_on_first_call(prefix_router):
+    ctx = {"branch": "main", "commits": ["abc feat: x"], "remote": "https://github.com/u/r"}
+    with patch("router.get_git_context", return_value=ctx):
+        prefix_router.process("do something", cwd="/repo")
+    call_kwargs = prefix_router._ollama.run.call_args.kwargs
+    assert "branch=main" in call_kwargs["user_text"]
+
+
+def test_git_context_not_repeated_when_unchanged(prefix_router):
+    ctx = {"branch": "main", "commits": ["abc feat: x"], "remote": "https://github.com/u/r"}
+    with patch("router.get_git_context", return_value=ctx):
+        prefix_router.process("first", cwd="/repo")
+        prefix_router._ollama.run.reset_mock()
+        prefix_router.process("second", cwd="/repo")
+    call_kwargs = prefix_router._ollama.run.call_args.kwargs
+    assert "branch=main" not in call_kwargs["user_text"]
+
+
+def test_git_context_re_injected_on_branch_change(prefix_router):
+    ctx1 = {"branch": "main", "commits": ["abc feat: x"], "remote": None}
+    ctx2 = {"branch": "feature/y", "commits": ["def feat: y"], "remote": None}
+    with patch("router.get_git_context", side_effect=[ctx1, ctx2]):
+        prefix_router.process("first", cwd="/repo")
+        prefix_router._ollama.run.reset_mock()
+        prefix_router.process("second", cwd="/repo")
+    call_kwargs = prefix_router._ollama.run.call_args.kwargs
+    assert "branch=feature/y" in call_kwargs["user_text"]
+
+
+def test_system_prompt_passed_to_agent(prefix_router):
+    with patch("router.get_git_context", return_value=None):
+        prefix_router.process("do something", cwd="/repo")
+    call_kwargs = prefix_router._ollama.run.call_args.kwargs
+    assert call_kwargs.get("system_prompt") is not None
+    assert "base prompt" in call_kwargs["system_prompt"]
+
+
+def test_git_context_skipped_for_read_only_intent(prefix_router):
+    prefix_router._classify = MagicMock(return_value={"can_handle_locally": True, "intent_class": "read_only", "reason": "test"})
+    ctx = {"branch": "main", "commits": ["abc feat: x"], "remote": None}
+    with patch("router.get_git_context", return_value=ctx) as mock_gc:
+        prefix_router.process("what time is it", cwd="/repo")
+    mock_gc.assert_not_called()

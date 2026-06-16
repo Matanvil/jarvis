@@ -3,7 +3,6 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
 import approval_store
 from guardrails import Action, Decision, Guardrails
 from tools.shell import ShellTool
@@ -483,7 +482,6 @@ class Agent:
 
     def _build_system_prompt(self, cwd: str | None, memory_context: str = "", source: str = "") -> str:
         prompt = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~"))
-        prompt += f"\nCurrent local datetime: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
         if cwd:
             prompt += f"\nActive project directory: {cwd}\n"
         if memory_context:
@@ -504,7 +502,8 @@ class Agent:
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
             history: list | None = None, ollama_available: bool = True,
-            source: str = "", step_callback=None, command_id: str | None = None) -> dict:
+            source: str = "", step_callback=None, command_id: str | None = None,
+            system_prompt: str | None = None) -> dict:
         """Run the agent loop. cwd sets the active project directory for all tool calls.
         Returns dict with speak, display, and optional approval_required. When command_id
         is given and the run pauses for approval, a resume callable is registered so the
@@ -515,7 +514,7 @@ class Agent:
             steps=[],
             total_steps=0,
             last_tool_call=None,
-            system_prompt=self._build_system_prompt(cwd, memory_context, source),
+            system_prompt=system_prompt if system_prompt is not None else self._build_system_prompt(cwd, memory_context, source),
             cwd=cwd,
             source=source,
             ollama_available=ollama_available,
@@ -562,7 +561,11 @@ class Agent:
             response = self._client.messages.create(
                 model=self._model,
                 max_tokens=4096,
-                system=state.system_prompt,
+                system=[{
+                    "type": "text",
+                    "text": state.system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }],
                 tools=available_tools,
                 messages=state.messages,
             )

@@ -17,6 +17,7 @@ import config as cfg_module
 import logger as logger_module
 from command_pipeline import CommandPipeline
 from guardrails import Guardrails
+from prompt_loader import PromptLoader
 from router import Router
 from tools.mcp import MCPManager
 from telegram_bot import start_bot, stop_bot
@@ -41,7 +42,8 @@ def load_dependencies():
     guardrails = Guardrails(config)
     _mcp_manager = MCPManager(config.get("mcp_servers", []))
     _mcp_manager.start_all()
-    router = Router(config=config, guardrails=guardrails, mcp_manager=_mcp_manager)
+    prompt_loader = PromptLoader()
+    router = Router(config=config, guardrails=guardrails, prompt_loader=prompt_loader, mcp_manager=_mcp_manager)
     from memory import ProjectMemory
     pipeline = CommandPipeline(router=router, memory=ProjectMemory())
     store = ScheduleStore()
