@@ -383,16 +383,20 @@ class OllamaAgent:
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
             history: list | None = None, step_callback=None,
-            intent_class: str | None = None, command_id: str | None = None) -> dict:
+            intent_class: str | None = None, command_id: str | None = None,
+            system_prompt: str | None = None) -> dict:
         """Run Ollama tool-use loop. Raises EscalateToCloud if Ollama can't handle it.
         Returns same dict shape as Agent.run(). When command_id is given and the run
         pauses for approval, a resume callable is registered so it can continue
         server-side without replaying earlier steps."""
-        system_msg = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~")) + _OLLAMA_EXTRA
-        if cwd:
-            system_msg += f"\nActive project directory: {cwd}\n"
-        if memory_context:
-            system_msg += f"\nProject memory: {memory_context}\n"
+        if system_prompt is not None:
+            system_msg = system_prompt
+        else:
+            system_msg = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~")) + _OLLAMA_EXTRA
+            if cwd:
+                system_msg += f"\nActive project directory: {cwd}\n"
+            if memory_context:
+                system_msg += f"\nProject memory: {memory_context}\n"
 
         max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 15))
 
