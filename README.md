@@ -2,9 +2,9 @@
 
 > Talk to your Mac. Jarvis handles the rest.
 
-Jarvis is a local-first AI operating layer for macOS. Activate it with ⌃Space or say "Hey Jarvis" — it takes voice commands and executes them: file operations, shell commands, web search, code execution, app control, and developer workflows. A floating HUD shows responses; voice narrates summaries.
+Jarvis is a local-first AI operating layer for macOS. Activate it with ⌃⌥ or say "Hey Jarvis" — it takes voice commands and executes them: file operations, shell commands, web search, code execution, app control, and developer workflows. A floating streaming HUD shows responses building up live; voice narrates summaries.
 
-**Hybrid AI engine:** Routes simple tasks to Claude Haiku (~1-2s), complex reasoning to Claude Sonnet, with Ollama available for fully offline operation.
+**Hybrid AI engine:** A fine-tuned Qwen classifier routes intent before execution. Local Ollama models handle most tasks offline; Claude Haiku handles cloud-dependent tasks; Claude Sonnet handles deep reasoning.
 
 ---
 
@@ -16,16 +16,17 @@ _Screenshots / GIF coming soon._
 
 ## Features
 
-- **Voice-activated** — hotkey (⌃Space) or always-on wake word
-- **Floating HUD** — non-intrusive overlay, keyboard-dismissable
-- **File & shell operations** — with guardrails and approval prompts for destructive actions
+- **Voice-activated** — hotkey (⌃⌥) or always-on wake word
+- **Live streaming HUD** — responses build up character-by-character in a floating overlay; keyboard-dismissable
+- **Conversational sessions** — full multi-turn history with auto-compaction (Haiku summarises at 5K tokens)
+- **File & shell operations** — guardrails and approval prompts for destructive actions
 - **Web search** — Brave Search API or DuckDuckGo fallback
 - **Code execution** — multi-language, project-aware
 - **App control** — open apps, AppleScript, system notifications
 - **Project memory** — remembers your build/test commands per project
-- **Haiku-first routing** — fast by default, escalates to Sonnet only when needed
+- **Local-first routing** — fine-tuned Qwen classifier gates every command; Ollama handles most tasks without a cloud call
 - **Two-way delegation** — Claude can hand off sub-tasks to local Ollama
-- **Telegram integration** — send commands from your phone, receive proactive notifications, approve destructive actions remotely (optional)
+- **MCP client** — connect GitHub and other MCP servers for rich tool access
 
 ---
 
@@ -36,11 +37,21 @@ Two-process system:
 ```
 Swift App (menu bar + HUD + hotkey + STT + TTS)
         ↕ HTTP localhost:8765
-Python Core (FastAPI + Claude API + Ollama + tools)
+Python Core (FastAPI + Ollama + Claude API + tools)
 ```
 
-- **Swift app** (`jarvis-swift/`) — menu bar icon, floating HUD, global hotkey, wake word, STT via SFSpeechRecognizer, TTS via `say`
-- **Python core** (`jarvis-core/`) — FastAPI server, hybrid AI routing, tools, guardrails, project memory
+```
+POST /command → CommandPipeline → Router (fine-tuned Qwen classifier via Ollama)
+                      ↓                    ↓
+               ProjectMemory       Local Ollama agent  (most tasks)
+                                   Claude Haiku        (cloud/tool tasks)
+                                   Claude Sonnet       (complex_reasoning)
+                                         ↕ delegate_to_local
+                                   OllamaAgent (sub-tasks)
+```
+
+- **Swift app** (`jarvis-swift/`) — menu bar icon, floating streaming HUD, global hotkey ⌃⌥, wake word, STT via SFSpeechRecognizer, TTS via AVSpeechSynthesizer
+- **Python core** (`jarvis-core/`) — FastAPI server, local-first routing, tools, guardrails, conversational history with auto-compaction
 
 ---
 
@@ -48,14 +59,14 @@ Python Core (FastAPI + Claude API + Ollama + tools)
 
 | Dependency | Version |
 |---|---|
-| macOS | 13+ |
+| macOS | 26.0+ |
 | Python | 3.11+ |
 | Ollama | latest |
-| Xcode | 15+ |
+| Xcode | 16+ |
 | Node.js | 18+ (for xcodegen) |
 
-**API Keys required:**
-- Anthropic API key (for Claude Haiku / Sonnet)
+**API Keys (optional for local-only use):**
+- Anthropic API key (for Claude Haiku / Sonnet — web search and complex reasoning)
 - Brave Search API key (optional — falls back to DuckDuckGo)
 
 ---
@@ -65,7 +76,7 @@ Python Core (FastAPI + Claude API + Ollama + tools)
 ### 1. Clone
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/jarvis.git
+git clone https://github.com/Matanvil/jarvis.git
 cd jarvis
 ```
 
@@ -82,7 +93,7 @@ pip install -r requirements.txt
 
 ```bash
 cp jarvis-core/config.example.json ~/.jarvis/config.json
-# Edit ~/.jarvis/config.json — add your Anthropic API key
+# Edit ~/.jarvis/config.json — add your Anthropic API key if you want cloud AI
 ```
 
 ### 4. Start the Python server
@@ -107,7 +118,7 @@ open Jarvis.xcodeproj
 
 ## Building from source
 
-**Requirements:** macOS 13+, Xcode 15+, Python 3.11+
+**Requirements:** macOS 26.0+, Xcode 16+, Python 3.11+
 
 ### Swift app
 
@@ -116,9 +127,7 @@ open Jarvis.xcodeproj
 3. Find your Team ID: click your Apple ID row in the accounts list — the Team ID column shows the 10-character ID. Paste it into `Local.xcconfig`
 4. Open `jarvis-swift/Jarvis.xcodeproj` in Xcode and build with ⌘B
 
-On first launch, macOS will prompt for notification permission — click **Allow**.
-
-> **Without `Local.xcconfig`:** The app builds and runs but notifications fall back to the deprecated `NSUserNotificationCenter`. If you denied the permission prompt, re-enable in **System Settings → Notifications → Jarvis**.
+On first launch, macOS will prompt for Accessibility and Speech Recognition permissions — both are required.
 
 ### Python core
 
@@ -131,34 +140,17 @@ pip install -r requirements.txt
 
 ---
 
-## Optional Features
+## Local-first operation
 
-### Telegram Integration
+Jarvis is designed to work without cloud AI for most tasks. The pre-flight classifier (a fine-tuned Qwen model served via Ollama) gates every command before execution:
 
-Control Jarvis remotely from your phone and receive proactive notifications when you're away from your Mac.
+| Intent class | Handler |
+|---|---|
+| `read_only`, `prepare` | Local Ollama agent |
+| `destructive` | Local Ollama agent + approval prompt |
+| `complex_reasoning` | Claude Sonnet (web search, deep analysis) |
 
-**What it enables:**
-- Send voice commands to Jarvis via Telegram while away
-- Receive notifications when long tasks complete
-- Approve or deny destructive actions remotely with `/approve` / `/deny`
-- Toggle away mode from the menu bar, via Telegram (`/away` / `/back`), or by voice
-
-**Setup:**
-
-1. Create a bot via [@BotFather](https://t.me/BotFather) on Telegram — copy the token it gives you
-2. Find your user ID by messaging [@userinfobot](https://t.me/userinfobot)
-3. Add both to `~/.jarvis/config.json`:
-
-```json
-"telegram": {
-  "bot_token": "YOUR_BOT_TOKEN",
-  "allowed_user_id": 123456789
-}
-```
-
-4. Restart Jarvis — the bot starts automatically if configured
-
-The feature is fully opt-in. If `bot_token` is empty or `allowed_user_id` is `0`, the entire subsystem is disabled with zero overhead.
+Cloud models are only invoked when the command explicitly requires live web data or the classifier routes to `complex_reasoning`.
 
 ---
 
@@ -172,6 +164,16 @@ Run tests:
 cd jarvis-core
 source .venv/bin/activate
 pytest
+```
+
+440+ tests covering the Python core, routing, agent loops, guardrails, tools, and SSE streaming.
+
+View logs:
+
+```bash
+tail -f ~/.jarvis/logs/errors.log
+tail -f ~/.jarvis/logs/commands.log
+log show --predicate 'process == "Jarvis"' --last 5m   # Swift app logs
 ```
 
 ---
