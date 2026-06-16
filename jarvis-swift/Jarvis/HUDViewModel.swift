@@ -32,6 +32,9 @@ class HUDViewModel: ObservableObject {
     /// Accumulates streaming tokens for live display. Cleared when the turn finalizes.
     @Published var streamingBuffer: String = ""
 
+    /// Incoming token fragments queued by the network layer; drained at display rate by AudioController timer.
+    private(set) var tokenQueue: String = ""
+
     /// Start time of the current session (first command's timestamp). Used for save filename.
     private(set) var sessionStart: Date = Date()
 
@@ -63,13 +66,24 @@ class HUDViewModel: ObservableObject {
         turns[turns.count - 1].response = response
     }
 
-    /// Append a streaming token to the live buffer.
+    /// Queue an incoming token fragment. Does NOT update streamingBuffer — the display timer does that.
     func appendToken(_ token: String) {
-        streamingBuffer += token
+        tokenQueue += token
     }
 
-    /// Clear the streaming buffer (called when complete event arrives).
+    /// Drain up to `chars` characters from the queue into streamingBuffer. Returns true if queue still has data.
+    @discardableResult
+    func drainTokenQueue(chars: Int = 8) -> Bool {
+        guard !tokenQueue.isEmpty else { return false }
+        let slice = String(tokenQueue.prefix(chars))
+        tokenQueue = String(tokenQueue.dropFirst(chars))
+        streamingBuffer += slice
+        return !tokenQueue.isEmpty
+    }
+
+    /// Clear the streaming buffer and pending queue (called on complete/clear events).
     func clearStreamingBuffer() {
+        tokenQueue = ""
         streamingBuffer = ""
     }
 

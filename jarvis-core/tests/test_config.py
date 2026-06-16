@@ -95,9 +95,10 @@ def test_load_deep_merges_ollama(tmp_path, monkeypatch):
 def test_defaults_include_reasoning_block(tmp_path, monkeypatch):
     monkeypatch.setattr("config.CONFIG_PATH", tmp_path / "config.json")
     cfg = config.load()
-    assert cfg["reasoning"]["max_steps_claude"] == 10
-    assert cfg["reasoning"]["max_steps_ollama"] == 10
-    assert cfg["reasoning"]["max_total_steps"] == 20
+    assert cfg["reasoning"]["max_steps_claude"] == 15
+    assert cfg["reasoning"]["max_steps_ollama"] == 15
+    assert "max_total_steps" not in cfg["reasoning"]
+    assert "step_budgets" not in cfg["reasoning"]
     assert cfg["reasoning"]["stall_detection"] is True
 
 
@@ -114,7 +115,7 @@ def test_load_deep_merges_reasoning(tmp_path, monkeypatch):
     }))
     cfg = config.load()
     assert cfg["reasoning"]["max_steps_claude"] == 10
-    assert cfg["reasoning"]["max_total_steps"] == 20   # default preserved
+    assert cfg["reasoning"]["max_steps_ollama"] == 15  # default preserved
 
 
 def test_config_has_models_section(tmp_path, monkeypatch):

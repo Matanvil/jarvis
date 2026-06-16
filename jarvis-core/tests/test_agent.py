@@ -851,3 +851,73 @@ def test_agent_passes_mcp_manager_to_execute_tool():
             agent.run("list issues")
 
     assert captured.get("mcp_manager") is mgr
+
+
+# ── Task 11: result_summary cap and wrap-up nudge ─────────────────────────────
+
+def test_result_summary_capped_at_200_chars():
+    agent = make_agent()
+    long_result = "x" * 300
+
+    tool_block = MagicMock()
+    tool_block.type = "tool_use"
+    tool_block.name = "shell_run"
+    tool_block.input = {"command": "echo hi"}
+    tool_block.id = "tu_1"
+
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = "Done."
+
+    first_resp = MagicMock(stop_reason="tool_use", content=[tool_block])
+    second_resp = MagicMock(stop_reason="end_turn", content=[text_block])
+
+    with patch.object(agent._client.messages, "create", side_effect=[first_resp, second_resp]):
+        with patch("agent.execute_tool", return_value=long_result):
+            result = agent.run("run echo hi")
+
+    assert len(result["steps"][0]["result_summary"]) <= 200
+
+
+def test_wrap_up_nudge_injected_near_step_limit():
+    agent = make_agent()
+    agent._config["reasoning"] = {"max_steps_claude": 5}
+
+    # Return tool calls for first 3 iterations, then end_turn
+    def make_tool_resp(n):
+        b = MagicMock()
+        b.type = "tool_use"
+        b.name = "shell_run"
+        b.input = {"command": f"ls /tmp/{n}"}
+        b.id = f"tu_{n}"
+        r = MagicMock(stop_reason="tool_use", content=[b])
+        return r
+
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = "Done."
+    final_resp = MagicMock(stop_reason="end_turn", content=[text_block])
+
+    captured_messages = []
+    call_count = [0]
+
+    def fake_create(**kwargs):
+        captured_messages.append([m for m in kwargs.get("messages", [])])
+        n = call_count[0]
+        call_count[0] += 1
+        if n < 3:
+            return make_tool_resp(n)
+        return final_resp
+
+    with patch.object(agent._client.messages, "create", side_effect=fake_create):
+        with patch("agent.execute_tool", return_value="ok"):
+            agent.run("do lots of stuff")
+
+    # The 4th API call (index 3) should have the nudge in messages
+    assert call_count[0] >= 4
+    fourth_call_messages = captured_messages[3]
+    nudge_found = any(
+        isinstance(m.get("content"), str) and "approaching your step limit" in m["content"]
+        for m in fourth_call_messages
+    )
+    assert nudge_found, "wrap-up nudge not found in messages passed to 4th API call"

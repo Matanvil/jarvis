@@ -327,88 +327,10 @@ def test_finalize_tool_stops_before_step_limit(agent):
     assert len(result["steps"]) == 2
 
 
-# ── intent-class based step budgets ──────────────────────────────────────────
+# ── max_steps_ollama controls step limit ──────────────────────────────────────
 
-def test_read_only_intent_uses_lower_step_budget(agent):
-    """read_only intent_class uses step_budgets.read_only (5) not max_steps_ollama (10)."""
-    call_count = [0]
-    commands = [f"ls /dir{i}" for i in range(20)]
-
-    def fake_post(url, json=None, **kwargs):
-        call_count[0] += 1
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        if json and json.get("tool_choice") == "none":
-            resp.json.return_value = {"choices": [{"finish_reason": "stop",
-                                                    "message": {"content": "Done."}}]}
-        else:
-            cmd = commands[call_count[0] % len(commands)]
-            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
-                "content": None,
-                "tool_calls": [{"id": f"c{call_count[0]}", "function": {
-                    "name": "shell_run", "arguments": f'{{"command": "{cmd}"}}'
-                }}]
-            }}]}
-        return resp
-
-    agent._config["reasoning"]["max_steps_ollama"] = 10
-    agent._config["reasoning"]["step_budgets"] = {
-        "read_only": 5, "prepare": 8, "destructive": 10, "complex_reasoning": 10
-    }
-    with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", return_value="ok"):
-            agent.run("list files", intent_class="read_only")
-
-    # 5 tool calls + 1 salvage = ≤ 7 total API calls
-    assert call_count[0] <= 7
-
-
-def test_destructive_intent_uses_higher_step_budget(agent):
-    """destructive intent_class uses step_budgets.destructive (10), not read_only (3)."""
-    call_count = [0]
-    # Alternate tools so near-duplicate detection (same tool ≥ 3 times) doesn't fire
-    tools_cycle = ["shell_run", "file_read", "shell_run", "file_read",
-                   "shell_run", "file_read", "shell_run", "file_read",
-                   "shell_run", "file_read", "shell_run"]
-    args_cycle = [
-        '{"command": "rm /tmp/a"}', '{"path": "/tmp/a.log"}',
-        '{"command": "rm /tmp/b"}', '{"path": "/tmp/b.log"}',
-        '{"command": "rm /tmp/c"}', '{"path": "/tmp/c.log"}',
-        '{"command": "rm /tmp/d"}', '{"path": "/tmp/d.log"}',
-        '{"command": "rm /tmp/e"}', '{"path": "/tmp/e.log"}',
-        '{"command": "rm /tmp/f"}',
-    ]
-
-    def fake_post(url, json=None, **kwargs):
-        call_count[0] += 1
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        if json and json.get("tool_choice") == "none":
-            resp.json.return_value = {"choices": [{"finish_reason": "stop",
-                                                    "message": {"content": "Deleted."}}]}
-        else:
-            idx = (call_count[0] - 1) % len(tools_cycle)
-            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
-                "content": None,
-                "tool_calls": [{"id": f"c{call_count[0]}", "function": {
-                    "name": tools_cycle[idx], "arguments": args_cycle[idx]
-                }}]
-            }}]}
-        return resp
-
-    agent._config["reasoning"]["step_budgets"] = {
-        "read_only": 3, "prepare": 8, "destructive": 10, "complex_reasoning": 10
-    }
-    with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", return_value="ok"):
-            agent.run("delete temp files", intent_class="destructive")
-
-    # destructive budget=10 → more API calls than read_only budget=3 would allow (4 max)
-    assert call_count[0] > 4
-
-
-def test_no_intent_class_uses_max_steps_ollama(agent):
-    """Without intent_class, falls back to max_steps_ollama."""
+def test_max_steps_ollama_controls_step_limit(agent):
+    """max_steps_ollama limits total tool calls regardless of intent_class."""
     call_count = [0]
     commands = [f"ls /dir{i}" for i in range(20)]
 
@@ -430,13 +352,12 @@ def test_no_intent_class_uses_max_steps_ollama(agent):
         return resp
 
     agent._config["reasoning"]["max_steps_ollama"] = 3
-    agent._config["reasoning"]["step_budgets"] = {"read_only": 1}
     with patch.object(agent._http_client, "post", side_effect=fake_post):
         with patch("ollama_agent.execute_tool", return_value="ok"):
-            agent.run("do something")  # no intent_class → uses max_steps_ollama=3
+            agent.run("do something")
 
-    # 3 tool calls + 1 salvage = ≤ 5 total; more than 1 (which read_only budget would give)
-    assert call_count[0] > 2
+    # 3 tool calls + salvage = ≤ 5 total API calls
+    assert call_count[0] <= 5
 
 
 def test_finalize_tool_is_in_ollama_tools_schema(agent):
@@ -817,3 +738,194 @@ def test_ollama_agent_passes_mcp_manager_to_execute_tool():
             a.run("list issues")
 
     assert captured.get("mcp_manager") is mgr
+
+
+# ── Task 12: result_summary cap and wrap-up nudge ─────────────────────────────
+
+def test_ollama_result_summary_capped_at_200_chars(agent):
+    long_result = "y" * 300
+    tool_resp = _tool_response("shell_run", {"command": "ls"})
+    stop_resp = _stop_response("Done.")
+
+    responses = [tool_resp, stop_resp]
+    idx = [0]
+    def fake_post(url, json=None, **kwargs):
+        r = responses[idx[0]]; idx[0] += 1; return r
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.execute_tool", return_value=long_result):
+                result = agent.run("list files")
+
+    assert len(result["steps"][0]["result_summary"]) <= 200
+
+
+def test_ollama_wrap_up_nudge_injected_near_step_limit(agent):
+    agent._config["reasoning"]["max_steps_ollama"] = 5
+    agent._config["reasoning"]["stall_detection"] = False  # avoid near-dup terminating early
+    call_payloads = []
+    # Alternate tool names to also avoid near-duplicate detection
+    tools_cycle = ["shell_run", "file_read", "shell_run", "file_read"]
+
+    def fake_post(url, json=None, **kwargs):
+        call_payloads.append(json)
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        n = len(call_payloads)
+        if n >= 4:
+            resp.json.return_value = {"choices": [{"finish_reason": "stop",
+                                                    "message": {"content": "Done.", "tool_calls": None}}]}
+        else:
+            tool_name = tools_cycle[(n - 1) % len(tools_cycle)]
+            args = f'{{"command": "ls /tmp/{n}"}}' if tool_name == "shell_run" else f'{{"path": "/tmp/{n}.txt"}}'
+            resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+                "content": None,
+                "tool_calls": [{"id": f"c{n}", "function": {"name": tool_name, "arguments": args}}]
+            }}]}
+        return resp
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.execute_tool", return_value="ok"):
+                agent.run("do stuff")
+
+    assert len(call_payloads) >= 4
+    nudge_found = any(
+        "approaching your step limit" in (m.get("content") or "")
+        for m in call_payloads[3]["messages"]
+    )
+    assert nudge_found, "wrap-up nudge not found in 4th API call's messages"
+
+
+# ── planning text nudge ───────────────────────────────────────────────────────
+
+def test_planning_text_triggers_nudge_then_tool_call(agent):
+    """Model returns 'Let me check...' first, then a real tool call after nudge."""
+    from ollama_agent import _is_planning_text
+    assert _is_planning_text("Let me fetch the PR diff.")
+    assert _is_planning_text("I'll check the CI failures for you.")
+    assert not _is_planning_text("Done.")
+    assert not _is_planning_text("Your Downloads folder is empty.")
+
+    responses = [
+        _stop_response("Let me check the CI failures for you."),  # planning text, no tools
+        _tool_response("shell_run", {"command": "gh pr view 38 --json statusCheckRollup"}),
+        _stop_response("CI failed due to missing mcp module."),
+    ]
+    idx = [0]
+    captured_nudge = [False]
+
+    def fake_post(url, json=None, **kwargs):
+        r = responses[idx[0]]; idx[0] += 1; return r
+
+    def fake_step(event):
+        if event.get("type") == "clear":
+            captured_nudge[0] = True
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.execute_tool", return_value="ok"):
+                result = agent.run("check CI", step_callback=fake_step)
+
+    assert captured_nudge[0], "clear SSE event not emitted on nudge"
+    assert result["speak"] == "CI failed due to missing mcp module."
+    assert len(result["steps"]) >= 1
+
+
+def test_planning_text_escalates_after_2_retries(agent):
+    """If the model returns planning text 3 times (0 tool calls), escalate to cloud."""
+    stream_mock = MagicMock(side_effect=ValueError("force fallback"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post",
+                          return_value=_stop_response("Let me check that for you.")):
+            from ollama_agent import EscalateToCloud
+            with pytest.raises(EscalateToCloud):
+                agent.run("check something")
+
+
+def _make_streaming_finalize_response(answer: str, call_id: str = "call_fin"):
+    """Build SSE lines simulating a streaming finalize(answer=...) tool call."""
+    args_str = _json_mod.dumps({"answer": answer})
+    mid = len(args_str) // 2
+    return [
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"role": "assistant", "content": "", "tool_calls": [{"index": 0, "id": call_id, "type": "function", "function": {"name": "finalize", "arguments": ""}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": args_str[:mid]}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": args_str[mid:]}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})}',
+        "data: [DONE]",
+    ]
+
+
+def test_finalize_streams_answer_as_tokens(agent):
+    """When Ollama calls finalize(answer=...), the answer must be streamed as token events."""
+    from ollama_agent import _stream_call
+    answer = "Here is your code review: looks great overall."
+    lines = _make_streaming_finalize_response(answer)
+
+    events = []
+    with patch.object(agent._http_client, "stream", return_value=_mock_stream(lines)):
+        _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                     {"model": "test", "messages": [], "tools": []},
+                     step_callback=lambda e: events.append(e))
+
+    token_events = [e for e in events if e.get("type") == "token"]
+    assert len(token_events) > 0, "Expected token events from finalize answer"
+    assembled = "".join(e["text"] for e in token_events)
+    assert answer in assembled or assembled in answer, (
+        f"Assembled tokens '{assembled}' do not match expected answer '{answer}'"
+    )
+
+
+def test_finalize_emits_composing_step_before_tokens(agent):
+    """A 'Composing response…' step event must fire before the first token of a finalize answer."""
+    from ollama_agent import _stream_call
+    lines = _make_streaming_finalize_response("The answer is 42.")
+
+    events = []
+    composing_state = [False]
+    with patch.object(agent._http_client, "stream", return_value=_mock_stream(lines)):
+        _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                     {"model": "test", "messages": [], "tools": []},
+                     step_callback=lambda e: events.append(e),
+                     composing_state=composing_state)
+
+    step_events = [e for e in events if e.get("type") == "step"]
+    composing = [e for e in step_events if e.get("label") == "Composing response…"]
+    assert composing, "Expected 'Composing response…' step event for finalize call"
+
+    first_token_idx = next((i for i, e in enumerate(events) if e.get("type") == "token"), len(events))
+    composing_idx = next(i for i, e in enumerate(events) if e.get("label") == "Composing response…")
+    assert composing_idx < first_token_idx, "Composing step must fire before first token"
+
+
+def test_planning_text_after_tool_calls_triggers_nudge(agent):
+    """Model makes some tool calls, then returns planning text — should get nudged, not exit."""
+    responses = [
+        _tool_response("mcp__github__list_pull_requests", {"owner": "matanvilensky", "repo": "jarvis"}),
+        # After the tool call, model returns planning text instead of next tool or finalize
+        _stop_response("Let me check for PRs in the repo and review the local branch changes."),
+        # After nudge, model calls the corrected tool
+        _tool_response("mcp__github__list_pull_requests", {"owner": "Matanvil", "repo": "jarvis"}),
+        _stop_response("PR #39 is open: feat: Phase E."),
+    ]
+    idx = [0]
+    nudge_fired = [False]
+
+    def fake_post(url, json=None, **kwargs):
+        r = responses[idx[0]]; idx[0] += 1; return r
+
+    def fake_step(event):
+        if event.get("type") == "clear":
+            nudge_fired[0] = True
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.execute_tool", return_value='[{"number":39}]'):
+                result = agent.run("check PRs", step_callback=fake_step)
+
+    assert nudge_fired[0], "clear SSE not emitted when planning text followed tool calls"
+    assert "PR #39" in result["speak"]

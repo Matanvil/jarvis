@@ -105,8 +105,10 @@ struct HUDView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(viewModel.turns) { turn in
-                            TurnRowView(turn: turn)
+                        ForEach(Array(viewModel.turns.enumerated()), id: \.element.id) { idx, turn in
+                            let isLast = idx == viewModel.turns.count - 1
+                            let streaming = isLast && turn.response == nil ? viewModel.streamingBuffer : ""
+                            TurnRowView(turn: turn, streamingText: streaming)
                         }
                         // Invisible anchor for auto-scroll
                         Color.clear.frame(height: 1).id("bottom")
@@ -128,6 +130,9 @@ struct HUDView: View {
                     // Suppress auto-scroll during approval so buttons stay visible
                     if case .approval = viewModel.state { return }
                     withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: viewModel.streamingBuffer) { _, _ in
+                    proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
             .onPreferenceChange(ThreadHeightKey.self) { height in
@@ -303,6 +308,7 @@ struct HUDView: View {
 
 private struct TurnRowView: View {
     let turn: ConversationTurn
+    var streamingText: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -330,9 +336,10 @@ private struct TurnRowView: View {
                 .padding(.leading, 16)
             }
 
-            // Response (only when complete)
-            if let response = turn.response {
-                Text(response)
+            // Response: final text when done, streaming text while composing
+            let displayText = turn.response ?? (streamingText.isEmpty ? nil : streamingText)
+            if let text = displayText {
+                Text(text)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(Color(red: 0.47, green: 0.8, blue: 0.47))
                     .frame(maxWidth: .infinity, alignment: .leading)

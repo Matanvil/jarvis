@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time as _time
 from dataclasses import dataclass, field
 import httpx
 import approval_store
@@ -12,6 +13,25 @@ from tools.macos import MacOSTool
 from tools._dispatch import execute_tool, format_response
 from agent import TOOL_DEFINITIONS, _BASE_SYSTEM_PROMPT, _step_label
 from tools._errors import ApprovalRequiredError
+
+_PLANNING_RE = re.compile(
+    r"^(now\s+|ok(ay)?,?\s+|sure,?\s+|well,?\s+|alright,?\s+|great,?\s+)?"
+    r"(let me\b|i('ll| will)\b|i'm going to\b|i need to\b|i'll start\b|"
+    r"i'll check\b|i'll look\b|i'll fetch\b|i'll get\b|i'll find\b|i'll run\b|i'll read\b|"
+    r"to do this\b|here's what i|first[,\s]i)",
+    re.IGNORECASE,
+)
+
+
+def _is_planning_text(text: str) -> bool:
+    """Return True if this looks like planning/intent text without actual content.
+    Used to decide whether to nudge the model back toward tool use.
+    Empty text is also treated as non-final — the model gave up silently."""
+    if not text:
+        return True
+    first_line = text.strip().split("\n")[0].strip()
+    return bool(_PLANNING_RE.match(first_line))
+
 
 # Appended to the base system prompt for local models that need extra guidance
 _OLLAMA_EXTRA = """
@@ -94,14 +114,44 @@ _FINALIZE_TOOL = {
 _OLLAMA_TOOLS = _anthropic_to_ollama_tools(_OLLAMA_SAFE_TOOL_DEFINITIONS) + [_FINALIZE_TOOL]
 
 
+_FINALIZE_ANSWER_RE = re.compile(r'"answer"\s*:\s*"')
+
+_JSON_ESCAPE_MAP = {'"': '"', '\\': '\\', '/': '/', 'b': '\b',
+                    'f': '\f', 'n': '\n', 'r': '\r', 't': '\t'}
+
+
+def _decode_json_string_chunk(chunk: str, state: dict) -> tuple[str, bool]:
+    """Incrementally decode a chunk of a JSON string value.
+
+    state must have 'in_escape' (bool). Mutated in-place.
+    Returns (decoded_output, is_done) where is_done=True when the closing
+    unescaped '"' is found. Handles \\uXXXX by passing through literally.
+    """
+    out: list[str] = []
+    for ch in chunk:
+        if state["in_escape"]:
+            out.append(_JSON_ESCAPE_MAP.get(ch, ch))
+            state["in_escape"] = False
+        elif ch == '\\':
+            state["in_escape"] = True
+        elif ch == '"':
+            return ''.join(out), True  # hit closing quote of the JSON string value
+        else:
+            out.append(ch)
+    return ''.join(out), False
+
+
 def _stream_call(client: "httpx.Client", url: str, payload: dict,
-                 step_callback) -> tuple[dict, str | None]:
+                 step_callback, composing_state: list | None = None,
+                 metrics_out: dict | None = None) -> tuple[dict, str | None]:
     """Make a streaming LLM call. Returns (msg, finish_reason) in same shape as non-streaming.
 
     Branches on first meaningful chunk:
-    - tool_calls: accumulate fragments silently, no visual output
-    - content: fire step_callback({"type": "token", "text": token}) for each token
+    - tool_calls: accumulate fragments silently; finalize(answer=...) streams decoded answer tokens
+    - content: fire step_callback({"type": "token", "text": token}) per fragment
 
+    If metrics_out is provided it is populated with: ttft_ms, tokens, gen_ms, tok_s.
+    Tokens are counted for both text and finalize-answer paths.
     Falls back to non-streaming POST on any exception.
     """
     try:
@@ -111,6 +161,14 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
             accumulated: dict[int, dict] = {}  # index → {id, name, arguments}
             finish_reason: str | None = None
             is_text: bool | None = None  # None until first meaningful chunk
+            # Per-index state for streaming finalize answer content as decoded tokens.
+            # Uses an escape-aware JSON string decoder — no tail buffer needed.
+            _fin: dict[int, dict] = {}
+            # Latency / throughput metrics (tracked for both text and finalize paths)
+            _t_start: float = _time.monotonic()
+            _t_first_token: float | None = None
+            _token_count: int = 0
+            _t_last_token: float = _t_start
 
             for line in resp.iter_lines():
                 if not line or not line.startswith("data: "):
@@ -139,7 +197,15 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
                     token = delta.get("content", "")
                     if token:
                         full_content += token
+                        _now = _time.monotonic()
+                        if _t_first_token is None:
+                            _t_first_token = _now
+                        _token_count += 1
+                        _t_last_token = _now
                         if step_callback:
+                            if composing_state is not None and not composing_state[0]:
+                                composing_state[0] = True
+                                step_callback({"type": "step", "label": "Composing response…", "tool": "text", "milestone": False})
                             step_callback({"type": "token", "text": token})
                 elif is_text is False:
                     for tc_delta in delta.get("tool_calls", []):
@@ -152,7 +218,53 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
                         if func.get("name"):
                             accumulated[idx]["name"] = func["name"]
                         if func.get("arguments"):
-                            accumulated[idx]["arguments"] += func["arguments"]
+                            arg_chunk = func["arguments"]
+                            accumulated[idx]["arguments"] += arg_chunk
+
+                            # Stream finalize answer as decoded tokens so the HUD
+                            # shows the answer building up during generation.
+                            if step_callback and accumulated[idx].get("name") == "finalize":
+                                if idx not in _fin:
+                                    _fin[idx] = {"started": False, "pending": "",
+                                                 "in_escape": False, "done": False}
+                                fb = _fin[idx]
+                                if fb["done"]:
+                                    continue
+                                if not fb["started"]:
+                                    fb["pending"] += arg_chunk
+                                    m = _FINALIZE_ANSWER_RE.search(fb["pending"])
+                                    if m:
+                                        fb["started"] = True
+                                        if composing_state is not None and not composing_state[0]:
+                                            composing_state[0] = True
+                                            step_callback({"type": "step", "label": "Composing response…", "tool": "finalize", "milestone": False})
+                                        decoded, done = _decode_json_string_chunk(fb["pending"][m.end():], fb)
+                                        if decoded:
+                                            step_callback({"type": "token", "text": decoded})
+                                            _now = _time.monotonic()
+                                            if _t_first_token is None:
+                                                _t_first_token = _now
+                                            _token_count += 1
+                                            _t_last_token = _now
+                                        fb["done"] = done
+                                else:
+                                    decoded, done = _decode_json_string_chunk(arg_chunk, fb)
+                                    if decoded:
+                                        step_callback({"type": "token", "text": decoded})
+                                        _now = _time.monotonic()
+                                        if _t_first_token is None:
+                                            _t_first_token = _now
+                                        _token_count += 1
+                                        _t_last_token = _now
+                                    fb["done"] = done
+
+        # Populate metrics (captured for both text and finalize paths)
+        if metrics_out is not None and _token_count > 0:
+            gen_ms = int((_t_last_token - (_t_first_token or _t_start)) * 1000) or 1
+            metrics_out["ttft_ms"] = int((_t_first_token - _t_start) * 1000) if _t_first_token else None
+            metrics_out["tokens"] = _token_count
+            metrics_out["gen_ms"] = gen_ms
+            metrics_out["tok_s"] = round(_token_count / (gen_ms / 1000), 1)
 
         # Reconstruct msg in non-streaming shape
         if accumulated:
@@ -200,6 +312,10 @@ class _OllamaLoopState:
     user_text: str
     pending_tool_calls: list | None = None
     pending_index: int = 0
+    no_tool_retries: int = 0
+    composing_emitted: bool = False
+    gen_metrics: dict = field(default_factory=dict)
+    wrap_up_nudged: bool = False
 
 
 class OllamaAgent:
@@ -278,11 +394,7 @@ class OllamaAgent:
         if memory_context:
             system_msg += f"\nProject memory: {memory_context}\n"
 
-        budgets = self._config.get("reasoning", {}).get("step_budgets", {})
-        if intent_class and intent_class in budgets:
-            max_steps = int(budgets[intent_class])
-        else:
-            max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 10))
+        max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 15))
 
         state = _OllamaLoopState(
             messages=[
@@ -316,22 +428,77 @@ class OllamaAgent:
 
     def _outer_loop(self, state: "_OllamaLoopState", step_callback) -> dict:
         url = f"{self._host}/v1/chat/completions"
+        wrap_up_step = state.max_steps - 2
         try:
             while state.steps_used < state.max_steps:
+                if state.steps_used >= wrap_up_step and not state.wrap_up_nudged:
+                    state.wrap_up_nudged = True
+                    nudge = (
+                        "You are approaching your step limit. Based on everything you have found so far, "
+                        "call finalize() now with your best answer — include what you discovered and what "
+                        "still needs to be done if the task isn't complete."
+                    )
+                    state.messages.append({"role": "user", "content": nudge})
+
                 state.steps_used += 1
                 payload = {"model": self._model, "messages": state.messages, "tools": self._build_tool_list()}
                 if self._chat_template_kwargs:
                     payload["chat_template_kwargs"] = self._chat_template_kwargs
 
-                msg, finish = _stream_call(self._http_client, url, payload, step_callback)
+                composing_state = [state.composing_emitted]
+                call_metrics: dict = {}
+                msg, finish = _stream_call(self._http_client, url, payload, step_callback, composing_state, call_metrics)
+                state.composing_emitted = composing_state[0]
+                if call_metrics:
+                    state.gen_metrics = call_metrics  # keep last text-generating call's metrics
 
                 if finish == "stop" or not msg.get("tool_calls"):
                     text = _clean_ollama_text(msg.get("content") or "")
                     if not text and not state.tool_calls_made and finish != "stop":
                         raise EscalateToCloud("Empty response from local executor — server may have crashed")
-                    result = format_response(text, state.tool_calls_made)
-                    result["steps"] = state.steps
-                    return result
+
+                    # Genuine final answer: text is not planning-intent. Return now.
+                    if not _is_planning_text(text):
+                        result = format_response(text, state.tool_calls_made)
+                        result["steps"] = state.steps
+                        result.update(state.gen_metrics)
+                        return result
+
+                    # Planning text returned — model wants to continue but didn't call a tool.
+                    # Nudge regardless of whether previous tool calls were made.
+                    if state.no_tool_retries < 2:
+                        state.no_tool_retries += 1
+                        state.steps_used -= 1  # don't burn a step on the nudge
+                        state.composing_emitted = False  # allow "Composing response…" to refire
+                        if text:  # never append an empty assistant message — some backends reject it
+                            state.messages.append({"role": "assistant", "content": text})
+                        if not text:
+                            nudge = (
+                                "You returned an empty response. Based on the tool results so far, "
+                                "either call the next tool to continue, or call finalize() with your answer."
+                            )
+                        elif state.tool_calls_made:
+                            nudge = (
+                                "You've made progress but returned planning text instead of calling a tool. "
+                                "Continue by calling the next tool now — do not write a text response."
+                            )
+                        else:
+                            nudge = (
+                                "You returned text but made no tool calls. "
+                                "You MUST call the appropriate tool now — do not write a text response."
+                            )
+                        if step_callback:
+                            step_callback({"type": "clear"})
+                        state.messages.append({"role": "user", "content": nudge})
+                        continue
+
+                    # 2 retries exhausted — if we did useful work, return it; otherwise escalate.
+                    if state.tool_calls_made:
+                        result = format_response(text, state.tool_calls_made)
+                        result["steps"] = state.steps
+                        result.update(state.gen_metrics)
+                        return result
+                    raise EscalateToCloud("Model returned text without tool calls after 2 retries")
 
                 state.messages.append(msg)
                 kind, result = self._process_tools(state, msg["tool_calls"], 0, step_callback)
@@ -447,8 +614,9 @@ class OllamaAgent:
                 step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
             try:
                 result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=self._coding, mcp_manager=self._mcp_manager)
-                step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
+                step["result_summary"] = result[:200] if isinstance(result, str) else str(result)[:200]
                 state.tool_calls_made.append(name)
+                state.no_tool_retries = 0  # successful tool call resets retry budget
             except ApprovalRequiredError as e:
                 # Revert this call's loop-state effects so resume re-processes it cleanly.
                 state.steps.pop()

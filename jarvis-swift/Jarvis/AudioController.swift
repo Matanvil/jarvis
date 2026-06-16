@@ -26,6 +26,8 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     private var recognitionTask: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
     private var silenceTimer: Timer?
+    private var streamTimer: Timer?
+    private var pendingCompleteEvent: [String: Any]?
     private var isListening = false
     private var pendingToolUseId: String?
     private var pendingApprovalCategory: String?
@@ -191,6 +193,41 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         recognitionRequest = nil
     }
 
+    // MARK: - Stream display timer (15 fps, drains tokenQueue → streamingBuffer)
+
+    private func startStreamTimerIfNeeded() {
+        guard streamTimer == nil else { return }
+        streamTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
+            // Timer fires on the main RunLoop (main thread). Use Task @MainActor to
+            // access @MainActor-isolated properties with a static guarantee.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // Flush the full queue immediately once complete is pending — no point
+                // in throttling after the model has finished generating.
+                let drainSize = self.pendingCompleteEvent != nil
+                    ? self.viewModel.tokenQueue.count
+                    : 20
+                let hasMore = self.viewModel.drainTokenQueue(chars: drainSize)
+                self.showHUD(.response(text: self.viewModel.streamingBuffer))
+                if !hasMore {
+                    if let event = self.pendingCompleteEvent {
+                        self.pendingCompleteEvent = nil
+                        self.stopStreamTimer()
+                        self.viewModel.clearStreamingBuffer()
+                        self.finalizeComplete(event: event)
+                    } else {
+                        self.stopStreamTimer()
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopStreamTimer() {
+        streamTimer?.invalidate()
+        streamTimer = nil
+    }
+
     private func scheduleSilenceTimeout() {
         silenceTimer?.invalidate()
         silenceTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
@@ -353,6 +390,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
                             if let data = jsonStr.data(using: .utf8),
                                let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                                 handleSSEEvent(event, stepVoice: stepVoice)
+                                await Task.yield()
                             }
                         }
                     }
@@ -379,30 +417,55 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             if stepVoice, milestone {
                 speak(label)
             }
+        case "clear":
+            stopStreamTimer()
+            viewModel.clearStreamingBuffer()
+            showHUD(.executing(step: "Working…"))
         case "token":
             let token = event["text"] as? String ?? ""
             if !token.isEmpty {
                 viewModel.appendToken(token)
-                showHUD(.response(text: viewModel.streamingBuffer))
+                startStreamTimerIfNeeded()
             }
         case "complete":
-            viewModel.clearStreamingBuffer()
-            if let data = try? JSONSerialization.data(withJSONObject: event),
-               let response = try? JSONDecoder().decode(CommandResponse.self, from: data) {
-                viewModel.finalizeTurn(response: response.text)
-                handleCommandResponse(response)
+            if streamTimer != nil {
+                // Timer is still draining — defer finalization until queue is empty.
+                pendingCompleteEvent = event
             } else {
-                let text = event["display"] as? String ?? event["speak"] as? String ?? "Done."
-                viewModel.finalizeTurn(response: text)
-                showHUD(.response(text: text))
+                viewModel.clearStreamingBuffer()
+                finalizeComplete(event: event)
             }
         case "error":
+            // Cancel any pending stream state so it doesn't bleed into the next command.
+            stopStreamTimer()
+            pendingCompleteEvent = nil
+            viewModel.clearStreamingBuffer()
             let msg = event["message"] as? String ?? "Something went wrong."
             viewModel.finalizeTurn(response: "Error: \(msg)")
             showHUD(.response(text: msg))
             speak(msg)
+        case "compacted":
+            let msg = event["message"] as? String ?? "Context compacted."
+            showHUD(.response(text: msg))
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self else { return }
+                self.showHUD(.hidden)
+            }
         default:
             break
+        }
+    }
+
+    private func finalizeComplete(event: [String: Any]) {
+        if let data = try? JSONSerialization.data(withJSONObject: event),
+           let response = try? JSONDecoder().decode(CommandResponse.self, from: data) {
+            viewModel.finalizeTurn(response: response.text)
+            handleCommandResponse(response)
+        } else {
+            let text = event["display"] as? String ?? event["speak"] as? String ?? "Done."
+            viewModel.finalizeTurn(response: text)
+            showHUD(.response(text: text))
         }
     }
 

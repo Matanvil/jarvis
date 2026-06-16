@@ -456,6 +456,7 @@ class _ClaudeLoopState:
     pending_content: list | None = None
     pending_index: int = 0
     pending_results: list | None = None
+    wrap_up_nudged: bool = False
 
 
 class Agent:
@@ -536,12 +537,19 @@ class Agent:
         return self._outer_loop(state, step_callback)
 
     def _outer_loop(self, state: "_ClaudeLoopState", step_callback) -> dict:
-        max_steps = self._config.get("reasoning", {}).get("max_steps_claude", 5)
-        max_total = self._config.get("reasoning", {}).get("max_total_steps", 20)
+        max_steps = self._config.get("reasoning", {}).get("max_steps_claude", 15)
+
+        wrap_up_step = max_steps - 2
 
         for _ in range(max_steps):
-            if state.total_steps >= max_total:
-                return {**format_response("I reached the maximum step limit.", state.tool_calls_made), "steps": state.steps}
+            if state.total_steps >= wrap_up_step and not state.wrap_up_nudged:
+                state.wrap_up_nudged = True
+                nudge = (
+                    "You are approaching your step limit. Based on everything you have found so far, "
+                    "call finalize() now with your best answer — include what you discovered and what "
+                    "still needs to be done if the task isn't complete."
+                )
+                state.messages.append({"role": "user", "content": nudge})
 
             # Omit delegate_to_local when Ollama is down to avoid wasting a step.
             # Omit notify for scheduled tasks — the scheduler fires the notification itself.
@@ -639,7 +647,7 @@ class Agent:
                         coding=self._coding,
                         mcp_manager=self._mcp_manager,
                     )
-                step["result_summary"] = result[:120] if isinstance(result, str) else str(result)[:120]
+                step["result_summary"] = result[:200] if isinstance(result, str) else str(result)[:200]
                 state.tool_calls_made.append(block.name)
                 tool_results.append({
                     "type": "tool_result",
