@@ -26,5 +26,5 @@ def _git(cwd: str, args: list[str]) -> str:
         capture_output=True, text=True, timeout=3,
     )
     if result.returncode != 0:
-        raise subprocess.CalledProcessError(result.returncode, "git")
+        raise subprocess.CalledProcessError(result.returncode, result.args)
     return result.stdout
