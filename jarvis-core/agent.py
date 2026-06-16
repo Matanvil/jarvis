@@ -456,6 +456,7 @@ class _ClaudeLoopState:
     pending_content: list | None = None
     pending_index: int = 0
     pending_results: list | None = None
+    wrap_up_nudged: bool = False
 
 
 class Agent:
@@ -541,16 +542,14 @@ class Agent:
         wrap_up_step = max_steps - 2
 
         for _ in range(max_steps):
-            if state.total_steps >= wrap_up_step:
+            if state.total_steps >= wrap_up_step and not state.wrap_up_nudged:
+                state.wrap_up_nudged = True
                 nudge = (
                     "You are approaching your step limit. Based on everything you have found so far, "
                     "call finalize() now with your best answer — include what you discovered and what "
                     "still needs to be done if the task isn't complete."
                 )
-                last_content = state.messages[-1].get("content") if state.messages else None
-                already_nudged = isinstance(last_content, str) and "approaching your step limit" in last_content
-                if not already_nudged:
-                    state.messages.append({"role": "user", "content": nudge})
+                state.messages.append({"role": "user", "content": nudge})
 
             # Omit delegate_to_local when Ollama is down to avoid wasting a step.
             # Omit notify for scheduled tasks — the scheduler fires the notification itself.

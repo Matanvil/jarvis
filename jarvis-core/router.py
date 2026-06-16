@@ -29,10 +29,14 @@ class Router:
         self._claude = self._sonnet   # legacy alias for claude_only / ollama_first modes
         self._history: list[dict] = []
         self._pending_compaction_notice: bool = False
+        self._needs_compaction: bool = False
+        self._compact_failed: bool = False
         self._anthropic_client = _anthropic.Anthropic(api_key=config.get("anthropic_api_key", ""))
 
     def reset_conversation(self) -> None:
         self._history = []
+        self._needs_compaction = False
+        self._compact_failed = False
 
         mode = self._config.get("ollama", {}).get("routing_mode", "ollama_first")
         if mode not in _VALID_ROUTING_MODES:
@@ -119,6 +123,12 @@ class Router:
         """Route a command via pre-flight classifier and return response with metadata."""
         start = time.time()
         mode = self._routing_mode
+
+        # Deferred compaction: runs at the START of the next command so it doesn't
+        # block the previous command's final SSE event ("complete").
+        if self._needs_compaction and not self._compact_failed:
+            self._needs_compaction = False
+            self._compact()
 
         if self._pending_compaction_notice and step_callback is not None:
             step_callback({"type": "compacted", "message": "Context compacted."})
@@ -267,8 +277,8 @@ class Router:
             {"role": "assistant", "content": assistant_content},
         ])
 
-        if self._estimate_tokens() > 5000:
-            self._compact()
+        if not self._compact_failed and self._estimate_tokens() > 5000:
+            self._needs_compaction = True  # compact at start of next process() call
 
     def _estimate_tokens(self) -> int:
         """Rough token estimate: 1 token ≈ 4 chars."""
@@ -314,7 +324,8 @@ class Router:
             self._pending_compaction_notice = True
             logging.getLogger("jarvis.errors").info("Session history compacted.")
         except Exception as e:
-            logging.getLogger("jarvis.errors").warning(f"History compaction failed (continuing): {e}")
+            self._compact_failed = True  # circuit breaker: don't retry until reset_conversation()
+            logging.getLogger("jarvis.errors").warning(f"History compaction failed (disabled until reset): {e}")
 
     def _annotate(self, result: dict, agent: str, model: str,
                   escalated: bool, escalation_reason: str | None,

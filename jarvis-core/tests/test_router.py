@@ -502,7 +502,8 @@ def test_classify_receives_history_context(config):
     assert messages[-1]["content"] == "yes please"
 
 
-def test_compact_fires_when_tokens_exceed_threshold(haiku_router):
+def test_compact_fires_when_tokens_exceed_threshold(haiku_router, mock_haiku_agent):
+    """Compaction is deferred: _append_turn sets the flag; process() triggers it."""
     large_content = "x" * 20001  # ~5000 tokens
     haiku_router._history = [
         {"role": "user", "content": large_content},
@@ -510,11 +511,18 @@ def test_compact_fires_when_tokens_exceed_threshold(haiku_router):
     ]
     mock_response = MagicMock()
     mock_response.content = [MagicMock(text="Compact summary of the session.")]
+    mock_haiku_agent.run.return_value = {"speak": "next", "display": "next", "steps": []}
 
+    # First: _append_turn should set the deferred flag but NOT compact yet.
+    haiku_router._append_turn("another command", {"speak": "ok", "display": "ok", "steps": []})
+    assert haiku_router._needs_compaction is True
+    assert len(haiku_router._history) == 4  # not compacted yet
+
+    # Second: process() triggers the deferred compact at its start.
     with patch.object(haiku_router._anthropic_client.messages, "create", return_value=mock_response):
-        haiku_router._append_turn("another command", {"speak": "ok", "display": "ok", "steps": []})
+        haiku_router.process("next command")
 
-    assert len(haiku_router._history) == 2
+    assert len(haiku_router._history) == 4  # 2 compact + 2 new from process()
     assert haiku_router._history[0]["content"] == "[Prior conversation compacted]"
     assert "Compact summary" in haiku_router._history[1]["content"]
     assert haiku_router._pending_compaction_notice is True
@@ -531,6 +539,7 @@ def test_compact_best_effort_on_failure(haiku_router):
 
     assert haiku_router._history == original_history
     assert haiku_router._pending_compaction_notice is False
+    assert haiku_router._compact_failed is True  # circuit breaker set
 
 
 def test_compaction_notice_emitted_on_next_process(haiku_router, mock_haiku_agent):

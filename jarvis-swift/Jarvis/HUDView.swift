@@ -131,7 +131,7 @@ struct HUDView: View {
                     if case .approval = viewModel.state { return }
                     withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
-                .onChange(of: viewModel.streamingBuffer) { _ in
+                .onChange(of: viewModel.streamingBuffer) { _, _ in
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }

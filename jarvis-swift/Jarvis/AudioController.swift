@@ -197,23 +197,25 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
 
     private func startStreamTimerIfNeeded() {
         guard streamTimer == nil else { return }
-        NSLog("[Jarvis] streamTimer START — queueLen=%d", viewModel.tokenQueue.count)
         streamTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
+            // Timer fires on the main RunLoop (main thread). Use Task @MainActor to
+            // access @MainActor-isolated properties with a static guarantee.
+            Task { @MainActor [weak self] in
                 guard let self else { return }
-                let qBefore = self.viewModel.tokenQueue.count
-                let hasMore = self.viewModel.drainTokenQueue(chars: 8)
-                NSLog("[Jarvis] timerTick qBefore=%d hasMore=%d bufLen=%d", qBefore, hasMore ? 1 : 0, self.viewModel.streamingBuffer.count)
+                // Flush the full queue immediately once complete is pending — no point
+                // in throttling after the model has finished generating.
+                let drainSize = self.pendingCompleteEvent != nil
+                    ? self.viewModel.tokenQueue.count
+                    : 20
+                let hasMore = self.viewModel.drainTokenQueue(chars: drainSize)
                 self.showHUD(.response(text: self.viewModel.streamingBuffer))
                 if !hasMore {
                     if let event = self.pendingCompleteEvent {
-                        NSLog("[Jarvis] streamTimer DONE — finalizing via pending complete")
                         self.pendingCompleteEvent = nil
                         self.stopStreamTimer()
                         self.viewModel.clearStreamingBuffer()
                         self.finalizeComplete(event: event)
                     } else {
-                        NSLog("[Jarvis] streamTimer DONE — no pending complete")
                         self.stopStreamTimer()
                     }
                 }
@@ -423,19 +425,21 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             let token = event["text"] as? String ?? ""
             if !token.isEmpty {
                 viewModel.appendToken(token)
-                NSLog("[Jarvis] token arrived len=%d queueTotal=%d", token.count, viewModel.tokenQueue.count)
                 startStreamTimerIfNeeded()
             }
         case "complete":
             if streamTimer != nil {
-                NSLog("[Jarvis] complete deferred — timer running, queueLen=%d", viewModel.tokenQueue.count)
+                // Timer is still draining — defer finalization until queue is empty.
                 pendingCompleteEvent = event
             } else {
-                NSLog("[Jarvis] complete immediate — no timer, queueLen=%d", viewModel.tokenQueue.count)
                 viewModel.clearStreamingBuffer()
                 finalizeComplete(event: event)
             }
         case "error":
+            // Cancel any pending stream state so it doesn't bleed into the next command.
+            stopStreamTimer()
+            pendingCompleteEvent = nil
+            viewModel.clearStreamingBuffer()
             let msg = event["message"] as? String ?? "Something went wrong."
             viewModel.finalizeTurn(response: "Error: \(msg)")
             showHUD(.response(text: msg))

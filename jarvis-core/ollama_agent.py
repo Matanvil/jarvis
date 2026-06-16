@@ -116,6 +116,30 @@ _OLLAMA_TOOLS = _anthropic_to_ollama_tools(_OLLAMA_SAFE_TOOL_DEFINITIONS) + [_FI
 
 _FINALIZE_ANSWER_RE = re.compile(r'"answer"\s*:\s*"')
 
+_JSON_ESCAPE_MAP = {'"': '"', '\\': '\\', '/': '/', 'b': '\b',
+                    'f': '\f', 'n': '\n', 'r': '\r', 't': '\t'}
+
+
+def _decode_json_string_chunk(chunk: str, state: dict) -> tuple[str, bool]:
+    """Incrementally decode a chunk of a JSON string value.
+
+    state must have 'in_escape' (bool). Mutated in-place.
+    Returns (decoded_output, is_done) where is_done=True when the closing
+    unescaped '"' is found. Handles \\uXXXX by passing through literally.
+    """
+    out: list[str] = []
+    for ch in chunk:
+        if state["in_escape"]:
+            out.append(_JSON_ESCAPE_MAP.get(ch, ch))
+            state["in_escape"] = False
+        elif ch == '\\':
+            state["in_escape"] = True
+        elif ch == '"':
+            return ''.join(out), True  # hit closing quote of the JSON string value
+        else:
+            out.append(ch)
+    return ''.join(out), False
+
 
 def _stream_call(client: "httpx.Client", url: str, payload: dict,
                  step_callback, composing_state: list | None = None,
@@ -123,10 +147,11 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
     """Make a streaming LLM call. Returns (msg, finish_reason) in same shape as non-streaming.
 
     Branches on first meaningful chunk:
-    - tool_calls: accumulate fragments silently; finalize(answer=...) streams answer tokens
-    - content: fire step_callback({"type": "token", "text": token}) per word boundary
+    - tool_calls: accumulate fragments silently; finalize(answer=...) streams decoded answer tokens
+    - content: fire step_callback({"type": "token", "text": token}) per fragment
 
     If metrics_out is provided it is populated with: ttft_ms, tokens, gen_ms, tok_s.
+    Tokens are counted for both text and finalize-answer paths.
     Falls back to non-streaming POST on any exception.
     """
     try:
@@ -136,12 +161,10 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
             accumulated: dict[int, dict] = {}  # index → {id, name, arguments}
             finish_reason: str | None = None
             is_text: bool | None = None  # None until first meaningful chunk
-            # composing_state is a 1-element list so callers can share the flag across calls
-            # Per-index state for streaming finalize answer content as tokens.
-            # "started": True once we've found the answer value opening quote.
-            # "tail": last 2 chars buffered to avoid emitting the closing `"}`.
+            # Per-index state for streaming finalize answer content as decoded tokens.
+            # Uses an escape-aware JSON string decoder — no tail buffer needed.
             _fin: dict[int, dict] = {}
-            # Latency / throughput metrics
+            # Latency / throughput metrics (tracked for both text and finalize paths)
             _t_start: float = _time.monotonic()
             _t_first_token: float | None = None
             _token_count: int = 0
@@ -198,12 +221,15 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
                             arg_chunk = func["arguments"]
                             accumulated[idx]["arguments"] += arg_chunk
 
-                            # Stream finalize answer tokens so the HUD doesn't
-                            # sit blank for the entire answer-generation time.
+                            # Stream finalize answer as decoded tokens so the HUD
+                            # shows the answer building up during generation.
                             if step_callback and accumulated[idx].get("name") == "finalize":
                                 if idx not in _fin:
-                                    _fin[idx] = {"started": False, "pending": "", "tail": ""}
+                                    _fin[idx] = {"started": False, "pending": "",
+                                                 "in_escape": False, "done": False}
                                 fb = _fin[idx]
+                                if fb["done"]:
+                                    continue
                                 if not fb["started"]:
                                     fb["pending"] += arg_chunk
                                     m = _FINALIZE_ANSWER_RE.search(fb["pending"])
@@ -212,22 +238,27 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
                                         if composing_state is not None and not composing_state[0]:
                                             composing_state[0] = True
                                             step_callback({"type": "step", "label": "Composing response…", "tool": "finalize", "milestone": False})
-                                        content = fb["pending"][m.end():]
-                                        # Buffer last 2 chars to avoid emitting closing `"}`.
-                                        if len(content) > 2:
-                                            step_callback({"type": "token", "text": content[:-2]})
-                                            fb["tail"] = content[-2:]
-                                        else:
-                                            fb["tail"] = content
+                                        decoded, done = _decode_json_string_chunk(fb["pending"][m.end():], fb)
+                                        if decoded:
+                                            step_callback({"type": "token", "text": decoded})
+                                            _now = _time.monotonic()
+                                            if _t_first_token is None:
+                                                _t_first_token = _now
+                                            _token_count += 1
+                                            _t_last_token = _now
+                                        fb["done"] = done
                                 else:
-                                    combined = fb["tail"] + arg_chunk
-                                    if len(combined) > 2:
-                                        step_callback({"type": "token", "text": combined[:-2]})
-                                        fb["tail"] = combined[-2:]
-                                    else:
-                                        fb["tail"] = combined
+                                    decoded, done = _decode_json_string_chunk(arg_chunk, fb)
+                                    if decoded:
+                                        step_callback({"type": "token", "text": decoded})
+                                        _now = _time.monotonic()
+                                        if _t_first_token is None:
+                                            _t_first_token = _now
+                                        _token_count += 1
+                                        _t_last_token = _now
+                                    fb["done"] = done
 
-        # Populate metrics
+        # Populate metrics (captured for both text and finalize paths)
         if metrics_out is not None and _token_count > 0:
             gen_ms = int((_t_last_token - (_t_first_token or _t_start)) * 1000) or 1
             metrics_out["ttft_ms"] = int((_t_first_token - _t_start) * 1000) if _t_first_token else None
@@ -284,6 +315,7 @@ class _OllamaLoopState:
     no_tool_retries: int = 0
     composing_emitted: bool = False
     gen_metrics: dict = field(default_factory=dict)
+    wrap_up_nudged: bool = False
 
 
 class OllamaAgent:
@@ -399,16 +431,14 @@ class OllamaAgent:
         wrap_up_step = state.max_steps - 2
         try:
             while state.steps_used < state.max_steps:
-                if state.steps_used >= wrap_up_step:
+                if state.steps_used >= wrap_up_step and not state.wrap_up_nudged:
+                    state.wrap_up_nudged = True
                     nudge = (
                         "You are approaching your step limit. Based on everything you have found so far, "
                         "call finalize() now with your best answer — include what you discovered and what "
                         "still needs to be done if the task isn't complete."
                     )
-                    last_content = state.messages[-1].get("content") if state.messages else None
-                    already_nudged = isinstance(last_content, str) and "approaching your step limit" in last_content
-                    if not already_nudged:
-                        state.messages.append({"role": "user", "content": nudge})
+                    state.messages.append({"role": "user", "content": nudge})
 
                 state.steps_used += 1
                 payload = {"model": self._model, "messages": state.messages, "tools": self._build_tool_list()}
@@ -439,7 +469,9 @@ class OllamaAgent:
                     if state.no_tool_retries < 2:
                         state.no_tool_retries += 1
                         state.steps_used -= 1  # don't burn a step on the nudge
-                        state.messages.append({"role": "assistant", "content": text})
+                        state.composing_emitted = False  # allow "Composing response…" to refire
+                        if text:  # never append an empty assistant message — some backends reject it
+                            state.messages.append({"role": "assistant", "content": text})
                         if not text:
                             nudge = (
                                 "You returned an empty response. Based on the tool results so far, "
@@ -584,6 +616,7 @@ class OllamaAgent:
                 result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=self._coding, mcp_manager=self._mcp_manager)
                 step["result_summary"] = result[:200] if isinstance(result, str) else str(result)[:200]
                 state.tool_calls_made.append(name)
+                state.no_tool_retries = 0  # successful tool call resets retry budget
             except ApprovalRequiredError as e:
                 # Revert this call's loop-state effects so resume re-processes it cleanly.
                 state.steps.pop()
