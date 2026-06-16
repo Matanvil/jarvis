@@ -49,6 +49,7 @@ class Router:
         self._compact_failed = False
         self._last_cwd = None
         self._last_git_context = None
+        self._pending_compaction_notice = False
 
         mode = self._config.get("ollama", {}).get("routing_mode", "ollama_first")
         if mode not in _VALID_ROUTING_MODES:
@@ -136,7 +137,7 @@ class Router:
         base = self._get_system_prompt(cwd)
         if base is None:
             return None
-        extra = self._prompt_loader.local_extra() if self._prompt_loader else ""
+        extra = self._prompt_loader.local_extra()
         return base + (f"\n{extra}" if extra else "")
 
     def _build_user_prefix(
@@ -174,8 +175,9 @@ class Router:
             lines.append(f"[Date: {_date.today()}]")
             self._last_cwd = cwd
         elif not lines:
-            # Nothing changed — return bare text
-            return text
+            if source != "scheduled":
+                # Nothing changed — return bare text
+                return text
 
         if source == "scheduled":
             lines.append(
