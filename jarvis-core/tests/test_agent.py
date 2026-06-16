@@ -335,7 +335,9 @@ def test_run_injects_memory_context_into_system_prompt(tmp_path, monkeypatch):
         agent.run("run tests", cwd="/my/project", memory_context="Test: npm test | Build: npm run build")
 
     assert len(captured_prompts) == 1
-    assert "npm test" in captured_prompts[0]
+    # system is now a list of cache_control blocks; check the text field
+    system_text = captured_prompts[0][0]["text"] if isinstance(captured_prompts[0], list) else captured_prompts[0]
+    assert "npm test" in system_text
 
 
 def test_delegate_to_local_calls_ollama_agent(tmp_path, monkeypatch):
