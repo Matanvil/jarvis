@@ -1,12 +1,16 @@
 import anthropic as _anthropic
 import json
 import logging
+import os
 import time
 import httpx
+from datetime import date as _date
 from classifier_prompt import CLASSIFY_SYSTEM_PROMPT
+from git_context import get_git_context
 from guardrails import Guardrails
 from ollama_agent import OllamaAgent, EscalateToCloud
 from agent import Agent, claude_code_available
+from prompt_loader import PromptLoader
 
 _VALID_ROUTING_MODES = {"ollama_first", "claude_only", "ollama_only", "haiku_first", "local_first"}
 
@@ -16,7 +20,7 @@ class Router:
     Returns the same response dict shape as both agents, plus routing metadata.
     """
 
-    def __init__(self, config: dict, guardrails: Guardrails, mcp_manager=None):
+    def __init__(self, config: dict, guardrails: Guardrails, prompt_loader: PromptLoader | None = None, mcp_manager=None):
         self._config = config
         self._http_client = httpx.Client(timeout=httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=5.0))
         self._ollama = OllamaAgent(config=config, guardrails=guardrails, mcp_manager=mcp_manager)
@@ -32,11 +36,19 @@ class Router:
         self._needs_compaction: bool = False
         self._compact_failed: bool = False
         self._anthropic_client = _anthropic.Anthropic(api_key=config.get("anthropic_api_key", ""))
+        # Session state for context injection
+        self._prompt_loader = prompt_loader
+        self._last_cwd: str | None = None
+        self._last_git_context: dict | None = None
+        self._cached_system_prompt: str | None = None
+        self._cached_system_prompt_cwd: str | None = None
 
     def reset_conversation(self) -> None:
         self._history = []
         self._needs_compaction = False
         self._compact_failed = False
+        self._last_cwd = None
+        self._last_git_context = None
 
         mode = self._config.get("ollama", {}).get("routing_mode", "ollama_first")
         if mode not in _VALID_ROUTING_MODES:
@@ -101,6 +113,81 @@ class Router:
             raise ValueError(f"No JSON object found in classifier response: {content!r}")
         return json.loads(content[start:end + 1])
 
+    def _get_system_prompt(self, cwd: str | None) -> str | None:
+        """Return cached system prompt, rebuilding if cwd changed. Returns None if no PromptLoader."""
+        if self._prompt_loader is None:
+            return None
+        if self._cached_system_prompt is None or self._cached_system_prompt_cwd != cwd:
+            base = self._prompt_loader.base_prompt().format(home=os.path.expanduser("~"))
+            profile = self._prompt_loader.profile()
+            refs = self._prompt_loader.refs_index(cwd)
+            parts = [base]
+            if profile:
+                parts.append(f"\n{profile}")
+            if refs:
+                paths_str = ", ".join(refs)
+                parts.append(f"\nAvailable refs: {paths_str} — use file_read to load when relevant to the task.\n")
+            self._cached_system_prompt = "\n".join(parts)
+            self._cached_system_prompt_cwd = cwd
+        return self._cached_system_prompt
+
+    def _get_local_system_prompt(self, cwd: str | None) -> str | None:
+        """System prompt for local models: base + local_extra. Returns None if no PromptLoader."""
+        base = self._get_system_prompt(cwd)
+        if base is None:
+            return None
+        extra = self._prompt_loader.local_extra() if self._prompt_loader else ""
+        return base + (f"\n{extra}" if extra else "")
+
+    def _build_user_prefix(
+        self, text: str, cwd: str | None, memory_context: str,
+        intent_class: str | None, source: str,
+    ) -> str:
+        """Prepend context lines to user text. Injects git context only when changed."""
+        lines: list[str] = []
+
+        # Git context: only for non-read_only tasks in a git repo, and only when changed
+        if intent_class != "read_only" and cwd:
+            git_ctx = get_git_context(cwd)
+            changed = (
+                cwd != self._last_cwd
+                or git_ctx != self._last_git_context
+            )
+            if changed and git_ctx:
+                commits_str = " · ".join(git_ctx.get("commits", []))
+                remote = git_ctx.get("remote") or "unknown"
+                lines.append(
+                    f"[Context: branch={git_ctx['branch']} | commits: {commits_str} | remote: {remote}]"
+                )
+                self._last_git_context = git_ctx
+            elif changed and git_ctx is None:
+                self._last_git_context = None
+        else:
+            git_ctx = None
+
+        # Project memory + cwd + date: inject on first call or cwd change
+        if cwd != self._last_cwd:
+            if memory_context:
+                lines.append(f"[Project: {memory_context}]")
+            if cwd:
+                lines.append(f"[cwd: {cwd}]")
+            lines.append(f"[Date: {_date.today()}]")
+            self._last_cwd = cwd
+        elif not lines:
+            # Nothing changed — return bare text
+            return text
+
+        if source == "scheduled":
+            lines.append(
+                "\n=== SCHEDULED TASK MODE ===\n"
+                "- NEVER call tools to send messages.\n"
+                "- For reminders: output ONLY the reminder text.\n"
+                "- For action tasks: use tools and output only the result.\n"
+                "=== END ==="
+            )
+
+        return "\n".join(lines) + "\n\n" + text
+
     def resume(self, command_id: str, step_callback=None) -> dict | None:
         """Continue a run paused for approval. Returns the annotated final result,
         or None if there is no paused run for this command_id (caller falls back to
@@ -151,8 +238,10 @@ class Router:
                           if use_sonnet else
                           self._config.get("models", {}).get("haiku", "claude-haiku-4-5-20251001"))
 
-            result = agent.run(text, cwd=cwd, memory_context=memory_context, history=self._history, source=source,
-                               step_callback=step_callback, command_id=command_id)
+            user_text = self._build_user_prefix(text, cwd, memory_context, intent_class, source)
+            result = agent.run(user_text=user_text, cwd=cwd, history=self._history, source=source,
+                               step_callback=step_callback, command_id=command_id,
+                               system_prompt=self._get_system_prompt(cwd))
             self._append_turn(text, result)
             return self._annotate(result, agent="claude", model=model_name,
                                   escalated=False, escalation_reason=classification.get("reason"),
@@ -169,9 +258,14 @@ class Router:
                 )
 
             intent_class = classification.get("intent_class", "read_only")
+            user_text = self._build_user_prefix(text, cwd, memory_context, intent_class, source)
+
             if intent_class == "complex_reasoning":
-                result = self._sonnet.run(text, cwd=cwd, memory_context=memory_context, history=self._history,
-                                          source=source, step_callback=step_callback, command_id=command_id)
+                result = self._sonnet.run(
+                    user_text=user_text, cwd=cwd, history=self._history, source=source,
+                    step_callback=step_callback, command_id=command_id,
+                    system_prompt=self._get_system_prompt(cwd),
+                )
                 self._append_turn(text, result)
                 model_name = self._config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
                 return self._annotate(result, agent="claude", model=model_name,
@@ -180,7 +274,11 @@ class Router:
 
             # Non-complex: use local OllamaAgent; escalate to Sonnet on failure
             try:
-                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, step_callback=step_callback, intent_class=intent_class, command_id=command_id)
+                result = self._ollama.run(
+                    user_text=user_text, cwd=cwd, history=self._history,
+                    step_callback=step_callback, intent_class=intent_class, command_id=command_id,
+                    system_prompt=self._get_local_system_prompt(cwd),
+                )
                 self._append_turn(text, result)
                 executor_model = self._config.get("ollama", {}).get("executor_model") or self._ollama_model
                 return self._annotate(result, agent="ollama", model=executor_model,
@@ -190,8 +288,11 @@ class Router:
                 logging.getLogger("jarvis.errors").warning(
                     f"Local executor escalated to Sonnet: {e.reason}"
                 )
-                result = self._sonnet.run(text, cwd=cwd, memory_context=memory_context, history=self._history,
-                                          ollama_available=False, source=source, step_callback=step_callback, command_id=command_id)
+                result = self._sonnet.run(
+                    user_text=user_text, cwd=cwd, history=self._history,
+                    ollama_available=False, source=source, step_callback=step_callback, command_id=command_id,
+                    system_prompt=self._get_system_prompt(cwd),
+                )
                 self._append_turn(text, result)
                 model_name = self._config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
                 return self._annotate(result, agent="claude", model=model_name,
@@ -200,8 +301,10 @@ class Router:
 
         # claude_only: skip classifier entirely
         if mode == "claude_only":
-            result = self._claude.run(text, cwd=cwd, memory_context=memory_context, history=self._history, source=source,
-                                      step_callback=step_callback, command_id=command_id)
+            user_text = self._build_user_prefix(text, cwd, memory_context, None, source)
+            result = self._claude.run(user_text=user_text, cwd=cwd, history=self._history, source=source,
+                                      step_callback=step_callback, command_id=command_id,
+                                      system_prompt=self._get_system_prompt(cwd))
             self._append_turn(text, result)
             return self._annotate(result, agent="claude", model="claude-sonnet-4-6",
                                   escalated=False, escalation_reason=None,
@@ -218,11 +321,16 @@ class Router:
 
         intent_class = classification.get("intent_class", "read_only")
         can_handle_locally = classification.get("can_handle_locally", True)
+        user_text = self._build_user_prefix(text, cwd, memory_context, intent_class, source)
 
         escalation_reason = None
         if mode == "ollama_only" or can_handle_locally:
             try:
-                result = self._ollama.run(text, cwd=cwd, memory_context=memory_context, history=self._history, step_callback=step_callback, intent_class=intent_class, command_id=command_id)
+                result = self._ollama.run(
+                    user_text=user_text, cwd=cwd, history=self._history,
+                    step_callback=step_callback, intent_class=intent_class, command_id=command_id,
+                    system_prompt=self._get_local_system_prompt(cwd),
+                )
                 self._append_turn(text, result)
                 return self._annotate(result, agent="ollama", model=self._ollama_model,
                                       escalated=False, escalation_reason=None,
@@ -242,9 +350,12 @@ class Router:
 
         # can_handle_locally=False OR Ollama escalated: route to Claude
         # Pass ollama_available=False when escalated so Claude doesn't waste a step on delegate_to_local
-        result = self._claude.run(text, cwd=cwd, memory_context=memory_context, history=self._history,
-                                  ollama_available=(escalation_reason is None), source=source,
-                                  step_callback=step_callback, command_id=command_id)
+        result = self._claude.run(
+            user_text=user_text, cwd=cwd, history=self._history,
+            ollama_available=(escalation_reason is None), source=source,
+            step_callback=step_callback, command_id=command_id,
+            system_prompt=self._get_system_prompt(cwd),
+        )
         self._append_turn(text, result)
         return self._annotate(result, agent="claude", model="claude-sonnet-4-6",
                               escalated=escalation_reason is not None,
