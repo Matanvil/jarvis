@@ -274,6 +274,10 @@ def _log_command_result(req: "CommandRequest", start: float, result: dict, *, re
             "escalated": result.get("_escalated"),
             "escalation_reason": result.get("_escalation_reason"),
             "agent_response_ms": result.get("_response_ms"),
+            "ttft_ms": result.get("ttft_ms"),
+            "gen_tokens": result.get("tokens"),
+            "gen_ms": result.get("gen_ms"),
+            "tok_s": result.get("tok_s"),
         })
         logger_module.log_training(
             _loggers["training"],

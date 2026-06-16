@@ -846,6 +846,61 @@ def test_planning_text_escalates_after_2_retries(agent):
                 agent.run("check something")
 
 
+def _make_streaming_finalize_response(answer: str, call_id: str = "call_fin"):
+    """Build SSE lines simulating a streaming finalize(answer=...) tool call."""
+    args_str = _json_mod.dumps({"answer": answer})
+    mid = len(args_str) // 2
+    return [
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"role": "assistant", "content": "", "tool_calls": [{"index": 0, "id": call_id, "type": "function", "function": {"name": "finalize", "arguments": ""}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": args_str[:mid]}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": args_str[mid:]}}]}, "finish_reason": None}]})}',
+        f'data: {_json_mod.dumps({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})}',
+        "data: [DONE]",
+    ]
+
+
+def test_finalize_streams_answer_as_tokens(agent):
+    """When Ollama calls finalize(answer=...), the answer must be streamed as token events."""
+    from ollama_agent import _stream_call
+    answer = "Here is your code review: looks great overall."
+    lines = _make_streaming_finalize_response(answer)
+
+    events = []
+    with patch.object(agent._http_client, "stream", return_value=_mock_stream(lines)):
+        _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                     {"model": "test", "messages": [], "tools": []},
+                     step_callback=lambda e: events.append(e))
+
+    token_events = [e for e in events if e.get("type") == "token"]
+    assert len(token_events) > 0, "Expected token events from finalize answer"
+    assembled = "".join(e["text"] for e in token_events)
+    assert answer in assembled or assembled in answer, (
+        f"Assembled tokens '{assembled}' do not match expected answer '{answer}'"
+    )
+
+
+def test_finalize_emits_composing_step_before_tokens(agent):
+    """A 'Composing response…' step event must fire before the first token of a finalize answer."""
+    from ollama_agent import _stream_call
+    lines = _make_streaming_finalize_response("The answer is 42.")
+
+    events = []
+    composing_state = [False]
+    with patch.object(agent._http_client, "stream", return_value=_mock_stream(lines)):
+        _stream_call(agent._http_client, "http://localhost/v1/chat/completions",
+                     {"model": "test", "messages": [], "tools": []},
+                     step_callback=lambda e: events.append(e),
+                     composing_state=composing_state)
+
+    step_events = [e for e in events if e.get("type") == "step"]
+    composing = [e for e in step_events if e.get("label") == "Composing response…"]
+    assert composing, "Expected 'Composing response…' step event for finalize call"
+
+    first_token_idx = next((i for i, e in enumerate(events) if e.get("type") == "token"), len(events))
+    composing_idx = next(i for i, e in enumerate(events) if e.get("label") == "Composing response…")
+    assert composing_idx < first_token_idx, "Composing step must fire before first token"
+
+
 def test_planning_text_after_tool_calls_triggers_nudge(agent):
     """Model makes some tool calls, then returns planning text — should get nudged, not exit."""
     responses = [

@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time as _time
 from dataclasses import dataclass, field
 import httpx
 import approval_store
@@ -14,7 +15,8 @@ from agent import TOOL_DEFINITIONS, _BASE_SYSTEM_PROMPT, _step_label
 from tools._errors import ApprovalRequiredError
 
 _PLANNING_RE = re.compile(
-    r"^(let me\b|i('ll| will)\b|i'm going to\b|i need to\b|i'll start\b|"
+    r"^(now\s+|ok(ay)?,?\s+|sure,?\s+|well,?\s+|alright,?\s+|great,?\s+)?"
+    r"(let me\b|i('ll| will)\b|i'm going to\b|i need to\b|i'll start\b|"
     r"i'll check\b|i'll look\b|i'll fetch\b|i'll get\b|i'll find\b|i'll run\b|i'll read\b|"
     r"to do this\b|here's what i|first[,\s]i)",
     re.IGNORECASE,
@@ -23,9 +25,10 @@ _PLANNING_RE = re.compile(
 
 def _is_planning_text(text: str) -> bool:
     """Return True if this looks like planning/intent text without actual content.
-    Used to decide whether to nudge the model back toward tool use."""
+    Used to decide whether to nudge the model back toward tool use.
+    Empty text is also treated as non-final — the model gave up silently."""
     if not text:
-        return False
+        return True
     first_line = text.strip().split("\n")[0].strip()
     return bool(_PLANNING_RE.match(first_line))
 
@@ -111,14 +114,19 @@ _FINALIZE_TOOL = {
 _OLLAMA_TOOLS = _anthropic_to_ollama_tools(_OLLAMA_SAFE_TOOL_DEFINITIONS) + [_FINALIZE_TOOL]
 
 
+_FINALIZE_ANSWER_RE = re.compile(r'"answer"\s*:\s*"')
+
+
 def _stream_call(client: "httpx.Client", url: str, payload: dict,
-                 step_callback) -> tuple[dict, str | None]:
+                 step_callback, composing_state: list | None = None,
+                 metrics_out: dict | None = None) -> tuple[dict, str | None]:
     """Make a streaming LLM call. Returns (msg, finish_reason) in same shape as non-streaming.
 
     Branches on first meaningful chunk:
-    - tool_calls: accumulate fragments silently, no visual output
-    - content: fire step_callback({"type": "token", "text": token}) for each token
+    - tool_calls: accumulate fragments silently; finalize(answer=...) streams answer tokens
+    - content: fire step_callback({"type": "token", "text": token}) per word boundary
 
+    If metrics_out is provided it is populated with: ttft_ms, tokens, gen_ms, tok_s.
     Falls back to non-streaming POST on any exception.
     """
     try:
@@ -128,6 +136,16 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
             accumulated: dict[int, dict] = {}  # index → {id, name, arguments}
             finish_reason: str | None = None
             is_text: bool | None = None  # None until first meaningful chunk
+            # composing_state is a 1-element list so callers can share the flag across calls
+            # Per-index state for streaming finalize answer content as tokens.
+            # "started": True once we've found the answer value opening quote.
+            # "tail": last 2 chars buffered to avoid emitting the closing `"}`.
+            _fin: dict[int, dict] = {}
+            # Latency / throughput metrics
+            _t_start: float = _time.monotonic()
+            _t_first_token: float | None = None
+            _token_count: int = 0
+            _t_last_token: float = _t_start
 
             for line in resp.iter_lines():
                 if not line or not line.startswith("data: "):
@@ -156,7 +174,15 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
                     token = delta.get("content", "")
                     if token:
                         full_content += token
+                        _now = _time.monotonic()
+                        if _t_first_token is None:
+                            _t_first_token = _now
+                        _token_count += 1
+                        _t_last_token = _now
                         if step_callback:
+                            if composing_state is not None and not composing_state[0]:
+                                composing_state[0] = True
+                                step_callback({"type": "step", "label": "Composing response…", "tool": "text", "milestone": False})
                             step_callback({"type": "token", "text": token})
                 elif is_text is False:
                     for tc_delta in delta.get("tool_calls", []):
@@ -169,7 +195,45 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
                         if func.get("name"):
                             accumulated[idx]["name"] = func["name"]
                         if func.get("arguments"):
-                            accumulated[idx]["arguments"] += func["arguments"]
+                            arg_chunk = func["arguments"]
+                            accumulated[idx]["arguments"] += arg_chunk
+
+                            # Stream finalize answer tokens so the HUD doesn't
+                            # sit blank for the entire answer-generation time.
+                            if step_callback and accumulated[idx].get("name") == "finalize":
+                                if idx not in _fin:
+                                    _fin[idx] = {"started": False, "pending": "", "tail": ""}
+                                fb = _fin[idx]
+                                if not fb["started"]:
+                                    fb["pending"] += arg_chunk
+                                    m = _FINALIZE_ANSWER_RE.search(fb["pending"])
+                                    if m:
+                                        fb["started"] = True
+                                        if composing_state is not None and not composing_state[0]:
+                                            composing_state[0] = True
+                                            step_callback({"type": "step", "label": "Composing response…", "tool": "finalize", "milestone": False})
+                                        content = fb["pending"][m.end():]
+                                        # Buffer last 2 chars to avoid emitting closing `"}`.
+                                        if len(content) > 2:
+                                            step_callback({"type": "token", "text": content[:-2]})
+                                            fb["tail"] = content[-2:]
+                                        else:
+                                            fb["tail"] = content
+                                else:
+                                    combined = fb["tail"] + arg_chunk
+                                    if len(combined) > 2:
+                                        step_callback({"type": "token", "text": combined[:-2]})
+                                        fb["tail"] = combined[-2:]
+                                    else:
+                                        fb["tail"] = combined
+
+        # Populate metrics
+        if metrics_out is not None and _token_count > 0:
+            gen_ms = int((_t_last_token - (_t_first_token or _t_start)) * 1000) or 1
+            metrics_out["ttft_ms"] = int((_t_first_token - _t_start) * 1000) if _t_first_token else None
+            metrics_out["tokens"] = _token_count
+            metrics_out["gen_ms"] = gen_ms
+            metrics_out["tok_s"] = round(_token_count / (gen_ms / 1000), 1)
 
         # Reconstruct msg in non-streaming shape
         if accumulated:
@@ -218,6 +282,8 @@ class _OllamaLoopState:
     pending_tool_calls: list | None = None
     pending_index: int = 0
     no_tool_retries: int = 0
+    composing_emitted: bool = False
+    gen_metrics: dict = field(default_factory=dict)
 
 
 class OllamaAgent:
@@ -349,7 +415,12 @@ class OllamaAgent:
                 if self._chat_template_kwargs:
                     payload["chat_template_kwargs"] = self._chat_template_kwargs
 
-                msg, finish = _stream_call(self._http_client, url, payload, step_callback)
+                composing_state = [state.composing_emitted]
+                call_metrics: dict = {}
+                msg, finish = _stream_call(self._http_client, url, payload, step_callback, composing_state, call_metrics)
+                state.composing_emitted = composing_state[0]
+                if call_metrics:
+                    state.gen_metrics = call_metrics  # keep last text-generating call's metrics
 
                 if finish == "stop" or not msg.get("tool_calls"):
                     text = _clean_ollama_text(msg.get("content") or "")
@@ -360,6 +431,7 @@ class OllamaAgent:
                     if not _is_planning_text(text):
                         result = format_response(text, state.tool_calls_made)
                         result["steps"] = state.steps
+                        result.update(state.gen_metrics)
                         return result
 
                     # Planning text returned — model wants to continue but didn't call a tool.
@@ -368,7 +440,12 @@ class OllamaAgent:
                         state.no_tool_retries += 1
                         state.steps_used -= 1  # don't burn a step on the nudge
                         state.messages.append({"role": "assistant", "content": text})
-                        if state.tool_calls_made:
+                        if not text:
+                            nudge = (
+                                "You returned an empty response. Based on the tool results so far, "
+                                "either call the next tool to continue, or call finalize() with your answer."
+                            )
+                        elif state.tool_calls_made:
                             nudge = (
                                 "You've made progress but returned planning text instead of calling a tool. "
                                 "Continue by calling the next tool now — do not write a text response."
@@ -387,6 +464,7 @@ class OllamaAgent:
                     if state.tool_calls_made:
                         result = format_response(text, state.tool_calls_made)
                         result["steps"] = state.steps
+                        result.update(state.gen_metrics)
                         return result
                     raise EscalateToCloud("Model returned text without tool calls after 2 retries")
 
