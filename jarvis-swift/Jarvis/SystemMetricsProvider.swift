@@ -99,7 +99,7 @@ final class SystemMetricsProvider: ObservableObject {
         let total = values.volumeTotalCapacity,
         let available = values.volumeAvailableCapacityForImportantUsage,
         total > 0 else { return diskPercent }
-        let used = total - available
+        let used = Int64(total) - available
         return min(Double(used) / Double(total) * 100, 100)
     }
 

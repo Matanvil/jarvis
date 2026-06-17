@@ -22,6 +22,10 @@
 		C5A0B5A7794EDAD1DAD54D45 /* AudioController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE46948996AFC7C505BF9F2D /* AudioController.swift */; };
 		F661D252F7E4C5019639C9E1 /* HUDViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14F409752942B73285CEBFE /* HUDViewModel.swift */; };
 		F7BADDC6504BE5C8CBDC71C7 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8280E667A550625C6F5B52C /* SettingsWindowController.swift */; };
+		A1B2C3D4E5F601234567890A /* FullDesktopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60123456789AA /* FullDesktopView.swift */; };
+		A1B2C3D4E5F601234567890B /* FullDesktopViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60123456789AB /* FullDesktopViewModel.swift */; };
+		A1B2C3D4E5F601234567890C /* FullDesktopWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60123456789AC /* FullDesktopWindow.swift */; };
+		A1B2C3D4E5F601234567890D /* SystemMetricsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60123456789AD /* SystemMetricsProvider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +47,10 @@
 		F2EA89B09E63D9954B6EA5A4 /* Jarvis.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Jarvis.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F4F2E672EFF61B016C7F5B5B /* ServerAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerAuth.swift; sourceTree = "<group>"; };
 		FE46948996AFC7C505BF9F2D /* AudioController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioController.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60123456789AA /* FullDesktopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullDesktopView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60123456789AB /* FullDesktopViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullDesktopViewModel.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60123456789AC /* FullDesktopWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullDesktopWindow.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60123456789AD /* SystemMetricsProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemMetricsProvider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -70,9 +78,13 @@
 				FE46948996AFC7C505BF9F2D /* AudioController.swift */,
 				28050F6CD9B2DCFF2B910307 /* ConversationStore.swift */,
 				D722C25A1AB2A313C61C2A2F /* ConversationTurn.swift */,
+				A1B2C3D4E5F60123456789AA /* FullDesktopView.swift */,
+				A1B2C3D4E5F60123456789AB /* FullDesktopViewModel.swift */,
+				A1B2C3D4E5F60123456789AC /* FullDesktopWindow.swift */,
 				827BD974D1EDA53447ABD677 /* HUDView.swift */,
 				B14F409752942B73285CEBFE /* HUDViewModel.swift */,
 				54CCBC142B08F40AAF2803FF /* HUDWindow.swift */,
+				A1B2C3D4E5F60123456789AD /* SystemMetricsProvider.swift */,
 				D758DDA5F42A49B6CB275DED /* Info.plist */,
 				BCD242C83ADE5623EDB958B3 /* Jarvis.entitlements */,
 				BD65447B9E4C38A85B4132FD /* JarvisApp.swift */,
@@ -150,9 +162,13 @@
 				C5A0B5A7794EDAD1DAD54D45 /* AudioController.swift in Sources */,
 				73EB57CE388694AD14C8846D /* ConversationStore.swift in Sources */,
 				20D2689B00846AD289147615 /* ConversationTurn.swift in Sources */,
+				A1B2C3D4E5F601234567890A /* FullDesktopView.swift in Sources */,
+				A1B2C3D4E5F601234567890B /* FullDesktopViewModel.swift in Sources */,
+				A1B2C3D4E5F601234567890C /* FullDesktopWindow.swift in Sources */,
 				67C0FA63859E57CDAD3386B0 /* HUDView.swift in Sources */,
 				F661D252F7E4C5019639C9E1 /* HUDViewModel.swift in Sources */,
 				80196255C1F1E1FAD02CF1B6 /* HUDWindow.swift in Sources */,
+				A1B2C3D4E5F601234567890D /* SystemMetricsProvider.swift in Sources */,
 				5E25349CC3262A18DE554A01 /* JarvisApp.swift in Sources */,
 				9A4605C19C8DED53DB7CFDA9 /* JarvisClient.swift in Sources */,
 				4C532BB72DB8492A9CA01EFA /* MenuBarController.swift in Sources */,

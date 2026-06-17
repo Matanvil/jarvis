@@ -18,6 +18,7 @@ private final class TransparentHostingView<Content: View>: NSHostingView<Content
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
 
     private var pythonProcess: Process?
@@ -26,6 +27,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var lastRestartTime: Date = .distantPast
     private var healthTimer: Timer?
     private var hudWindow: HUDWindow?
+    private var fullDesktopWindow: FullDesktopWindow?
+    private let fullDesktopViewModel = FullDesktopViewModel()
+    private let metricsProvider = SystemMetricsProvider()
     private var hudView: TransparentHostingView<HUDView>?
     private let hudViewModel = HUDViewModel.shared
     private var lastVisibleState: HUDState = .hidden
@@ -82,8 +86,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             }
             .store(in: &cancellables)
 
+        hudViewModel.$windowMode
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] mode in
+                switch mode {
+                case .fullDesktop: self?.openFullDesktopMode()
+                case .hud:         self?.closeFullDesktopMode()
+                }
+            }
+            .store(in: &cancellables)
+
         minimizeHUD()
         audioController.start()
+        metricsProvider.start()
+        fullDesktopViewModel.start()
         startAlertListener()
         installToApplicationsIfNeeded()
         checkFullDiskAccess()
@@ -174,6 +190,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         alertListenerTask?.cancel()
         healthTimer?.invalidate()
         hudViewModel.saveSessionSync()
+        metricsProvider.stop()
+        fullDesktopViewModel.stop()
         if let proc = pythonProcess, proc.processIdentifier > 0 {
             proc.terminate()  // SIGTERM — give uvicorn a chance to flush
             let done = DispatchSemaphore(value: 0)
@@ -418,6 +436,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     // MARK: - HUD
 
+    func openFullDesktopMode() {
+        DispatchQueue.main.async {
+            self.fullDesktopWindow?.alphaValue = 0
+            self.hudWindow?.orderOut(nil)
+            self.hudViewModel.expandToFullDesktop()
+            self.fullDesktopWindow?.makeKeyAndOrderFront(nil)
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                self.fullDesktopWindow?.animator().alphaValue = 1
+            }
+        }
+    }
+
+    func closeFullDesktopMode() {
+        DispatchQueue.main.async {
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.15
+                self.fullDesktopWindow?.animator().alphaValue = 0
+            }, completionHandler: {
+                self.fullDesktopWindow?.orderOut(nil)
+                self.fullDesktopWindow?.alphaValue = 1
+                self.hudViewModel.collapseToHUD()
+                self.hudWindow?.orderFront(nil)
+            })
+        }
+    }
+
     func showHUD(_ state: HUDState) {
         DispatchQueue.main.async {
             self.lastVisibleState = state
@@ -484,6 +529,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         window.contentView = hostingView
         hudView = hostingView
         hudWindow = window
+
+        fullDesktopWindow = FullDesktopWindow(
+            viewModel: hudViewModel,
+            fullViewModel: fullDesktopViewModel,
+            metricsProvider: metricsProvider,
+            onCollapse: { [weak self] in self?.hudViewModel.collapseToHUD() }
+        )
     }
 
     private func handleApprove() {
