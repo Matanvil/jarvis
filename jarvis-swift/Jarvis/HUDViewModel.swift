@@ -13,7 +13,7 @@ enum HUDState: Equatable {
     case minimized
 }
 
-enum WindowMode {
+enum WindowMode: Equatable {
     case hud
     case fullDesktop
 }

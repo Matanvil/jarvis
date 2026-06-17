@@ -440,7 +440,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         DispatchQueue.main.async {
             self.fullDesktopWindow?.alphaValue = 0
             self.hudWindow?.orderOut(nil)
-            self.hudViewModel.expandToFullDesktop()
             self.fullDesktopWindow?.makeKeyAndOrderFront(nil)
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.15
@@ -451,13 +450,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     func closeFullDesktopMode() {
         DispatchQueue.main.async {
+            guard self.fullDesktopWindow?.isVisible == true else { return }
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.15
                 self.fullDesktopWindow?.animator().alphaValue = 0
             }, completionHandler: {
                 self.fullDesktopWindow?.orderOut(nil)
                 self.fullDesktopWindow?.alphaValue = 1
-                self.hudViewModel.collapseToHUD()
                 self.hudWindow?.orderFront(nil)
             })
         }
