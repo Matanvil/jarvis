@@ -315,7 +315,7 @@ struct HUDView: View {
 
 // MARK: - TurnRowView
 
-private struct TurnRowView: View {
+struct TurnRowView: View {
     let turn: ConversationTurn
     var streamingText: String = ""
 

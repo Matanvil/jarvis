@@ -3,7 +3,15 @@ import SwiftUI
 
 final class FullDesktopWindow: NSWindow {
 
-    init(viewModel: HUDViewModel, fullViewModel: FullDesktopViewModel, metricsProvider: SystemMetricsProvider, onCollapse: @escaping () -> Void) {
+    init(
+        viewModel: HUDViewModel,
+        fullViewModel: FullDesktopViewModel,
+        metricsProvider: SystemMetricsProvider,
+        onCollapse: @escaping () -> Void,
+        onTextCommand: @escaping (String) -> Void,
+        onVoice: @escaping () -> Void,
+        onSettings: @escaping () -> Void
+    ) {
         let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let width  = min(screen.width * 0.9, 1440)
         let height = min(screen.height * 0.9, 900)
@@ -27,7 +35,10 @@ final class FullDesktopWindow: NSWindow {
             viewModel: viewModel,
             fullViewModel: fullViewModel,
             metricsProvider: metricsProvider,
-            onCollapse: onCollapse
+            onCollapse: onCollapse,
+            onTextCommand: onTextCommand,
+            onVoice: onVoice,
+            onSettings: onSettings
         )
         contentView = NSHostingView(rootView: rootView)
     }

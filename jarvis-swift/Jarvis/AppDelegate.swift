@@ -537,7 +537,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             viewModel: hudViewModel,
             fullViewModel: fullDesktopViewModel,
             metricsProvider: metricsProvider,
-            onCollapse: { [weak self] in self?.hudViewModel.collapseToHUD() }
+            onCollapse: { [weak self] in self?.hudViewModel.collapseToHUD() },
+            onTextCommand: { [weak self] text in
+                Task { @MainActor in self?.audioController.submitTextCommand(text: text) }
+            },
+            onVoice: { [weak self] in
+                Task { @MainActor in self?.audioController.triggerVoiceInput() }
+            },
+            onSettings: {
+                SettingsWindowController.shared.open()
+            }
         )
     }
 

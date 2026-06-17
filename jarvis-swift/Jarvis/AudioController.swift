@@ -67,6 +67,14 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
 
     // MARK: - Lifecycle
 
+    func triggerVoiceInput() {
+        if isListening {
+            stopAndSend()
+        } else {
+            requestAuthAndListen()
+        }
+    }
+
     func start() {
         NSLog("[Jarvis] AudioController.start() — registering flagsChanged monitor")
         hotkeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
