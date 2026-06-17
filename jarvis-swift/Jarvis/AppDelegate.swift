@@ -470,6 +470,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         DispatchQueue.main.async {
             self.lastVisibleState = state
             self.hudViewModel.state = state
+            guard self.hudViewModel.windowMode == .hud else { return }
             self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
             self.hudWindow?.orderFront(nil)
         }
@@ -491,6 +492,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                 self.lastVisibleState = self.hudViewModel.state
             }
             self.hudViewModel.state = .minimized
+            guard self.hudViewModel.windowMode == .hud else { return }
             self.hudWindow?.resizeForMinimized()
             self.hudWindow?.orderFront(nil)
         }
@@ -501,12 +503,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             guard self.lastVisibleState != .hidden else {
                 // No prior conversation — open HUD with text input focused.
                 self.hudViewModel.state = .response(text: "")
+                guard self.hudViewModel.windowMode == .hud else { return }
                 self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
                 self.hudWindow?.makeKeyAndOrderFront(nil)
                 self.hudViewModel.focusTextInput = true
                 return
             }
             self.hudViewModel.state = self.lastVisibleState
+            guard self.hudViewModel.windowMode == .hud else { return }
             self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
             self.hudWindow?.orderFront(nil)
         }
