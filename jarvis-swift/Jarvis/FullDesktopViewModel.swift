@@ -25,10 +25,11 @@ final class FullDesktopViewModel: ObservableObject {
 
     func start() {
         pollLog()
-        logTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.pollLog() }
         }
-        RunLoop.main.add(logTimer!, forMode: .common)
+        RunLoop.main.add(t, forMode: .common)
+        logTimer = t
     }
 
     func stop() {
