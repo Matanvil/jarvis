@@ -10,15 +10,18 @@ final class MenuBarController {
     private let onRestart: () -> Void
     private let onSettings: () -> Void
     private let onNewConversation: () -> Void
+    private let onOpenFullDesktop: () -> Void
 
     init(
         onRestart: @escaping () -> Void,
         onSettings: @escaping () -> Void,
-        onNewConversation: @escaping () -> Void
+        onNewConversation: @escaping () -> Void,
+        onOpenFullDesktop: @escaping () -> Void
     ) {
         self.onRestart = onRestart
         self.onSettings = onSettings
         self.onNewConversation = onNewConversation
+        self.onOpenFullDesktop = onOpenFullDesktop
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setupButton()
         setupMenu()
@@ -26,10 +29,28 @@ final class MenuBarController {
     }
 
     private func setupButton() {
-        // Initial image set by setStatus(.offline) called in init
+        guard let button = statusItem.button else { return }
+        button.action = #selector(buttonClicked(_:))
+        button.target = self
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    }
+
+    @objc private func buttonClicked(_ sender: NSStatusBarButton) {
+        guard let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseUp {
+            statusItem.menu = buildMenu()
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil
+        } else {
+            onOpenFullDesktop()
+        }
     }
 
     private func setupMenu() {
+        // Menu is now built on-demand in buildMenu() — no persistent menu assigned
+    }
+
+    private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
@@ -51,7 +72,7 @@ final class MenuBarController {
             action: #selector(toggleAway(_:)),
             keyEquivalent: ""
         )
-        awayItem.state = .off
+        awayItem.state = awayModeItem?.state ?? .off
         awayItem.target = self
         self.awayModeItem = awayItem
         menu.addItem(awayItem)
@@ -62,7 +83,7 @@ final class MenuBarController {
             keyEquivalent: "q"
         )
         menu.addItem(quit)
-        statusItem.menu = menu
+        return menu
     }
 
     @objc private func openSettings() {

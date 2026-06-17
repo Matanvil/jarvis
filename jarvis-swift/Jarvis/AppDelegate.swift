@@ -64,6 +64,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             },
             onNewConversation: { [weak self] in
                 self?.hudViewModel.newConversation()
+            },
+            onOpenFullDesktop: { [weak self] in
+                self?.hudViewModel.expandToFullDesktop()
             }
         )
         jarvisClient = JarvisClient()
@@ -513,7 +516,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             viewModel: hudViewModel,
             onDismiss:     { [weak self] in self?.hideHUD() },
             onMinimize:    { [weak self] in self?.minimizeHUD() },
-            onExpand:      { [weak self] in self?.expandHUD() },
+            onExpand:      { [weak self] in self?.hudViewModel.expandToFullDesktop() },
             onApprove:     { [weak self] in self?.handleApprove() },
             onDeny:        { [weak self] in self?.handleDeny() },
             onTextCommand: { [weak self] text in Task { @MainActor in self?.audioController.submitTextCommand(text: text) } }

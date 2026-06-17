@@ -56,10 +56,19 @@ struct HUDView: View {
                             .fill(.ultraThinMaterial)
                     )
 
-                    // Hover-reveal minimize/close buttons
+                    // Hover-reveal minimize/expand/close buttons
                     HStack(spacing: 6) {
                         Button(action: onMinimize) {
                             Image(systemName: "minus.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(
+                                    Color(red: 0.22, green: 0.74, blue: 0.97).opacity(0.85)
+                                )
+                        }
+                        .buttonStyle(.plain)
+
+                        Button(action: onExpand) {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right.circle.fill")
                                 .font(.system(size: 16))
                                 .foregroundStyle(
                                     Color(red: 0.22, green: 0.74, blue: 0.97).opacity(0.85)
