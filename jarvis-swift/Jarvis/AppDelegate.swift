@@ -73,6 +73,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         audioController = AudioController(
             client: jarvisClient,
             viewModel: hudViewModel,
+            fullDesktopViewModel: fullDesktopViewModel,
             showHUD: { [weak self] state in self?.showHUD(state) },
             hideHUD: { [weak self] in self?.hideHUD() }
         )

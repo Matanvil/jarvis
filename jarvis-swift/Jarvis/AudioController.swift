@@ -16,6 +16,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     // MARK: - Dependencies (injected)
     private let client: JarvisClient
     private let viewModel: HUDViewModel
+    private let fullDesktopViewModel: FullDesktopViewModel
     private let showHUD: (HUDState) -> Void   // calls AppDelegate.showHUD (updates state + orderFront)
     private let hideHUD: () -> Void           // calls AppDelegate.hideHUD (sets .hidden + orderOut)
 
@@ -50,11 +51,13 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     init(
         client: JarvisClient,
         viewModel: HUDViewModel,
+        fullDesktopViewModel: FullDesktopViewModel,
         showHUD: @escaping (HUDState) -> Void,
         hideHUD: @escaping () -> Void
     ) {
         self.client = client
         self.viewModel = viewModel
+        self.fullDesktopViewModel = fullDesktopViewModel
         self.showHUD = showHUD
         self.hideHUD = hideHUD
         super.init()
@@ -417,6 +420,8 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             if stepVoice, milestone {
                 speak(label)
             }
+            let toolName = event["tool"] as? String ?? label
+            fullDesktopViewModel.recordToolUsed(toolName)
         case "clear":
             stopStreamTimer()
             viewModel.clearStreamingBuffer()
@@ -458,6 +463,18 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     }
 
     private func finalizeComplete(event: [String: Any]) {
+        let tokS        = event["tok_s"] as? Double ?? 0
+        let ttftMs      = event["ttft_ms"] as? Int ?? 0
+        let model       = event["model"] as? String ?? ""
+        let intentClass = event["intent_class"] as? String ?? ""
+        let genTokens   = event["gen_tokens"] as? Int ?? 0
+        fullDesktopViewModel.updateMetrics(
+            tokS: tokS,
+            ttftMs: ttftMs,
+            model: model,
+            intentClass: intentClass,
+            genTokens: genTokens
+        )
         if let data = try? JSONSerialization.data(withJSONObject: event),
            let response = try? JSONDecoder().decode(CommandResponse.self, from: data) {
             viewModel.finalizeTurn(response: response.text)
