@@ -538,34 +538,24 @@ struct DesktopInputBar: View {
 
 struct ConversationZoneView: View {
     @ObservedObject var viewModel: HUDViewModel
-    var onTextCommand: (String) -> Void
-    var onVoice: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(viewModel.turns) { turn in
-                            TurnRowView(turn: turn, streamingText: viewModel.streamingBuffer)
-                                .id(turn.id)
-                        }
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(viewModel.turns) { turn in
+                        TurnRowView(turn: turn, streamingText: viewModel.streamingBuffer)
+                            .id(turn.id)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 14)
                 }
-                .onChange(of: viewModel.turns.count) { _ in
-                    if let last = viewModel.turns.last {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                    }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+            }
+            .onChange(of: viewModel.turns.count) { _ in
+                if let last = viewModel.turns.last {
+                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
             }
-
-            DesktopInputBar(
-                viewModel: viewModel,
-                onTextCommand: onTextCommand,
-                onVoice: onVoice
-            )
         }
     }
 }
@@ -580,27 +570,31 @@ struct CenterColumn: View {
     private var hasConversation: Bool { !viewModel.turns.isEmpty }
 
     var body: some View {
-        GeometryReader { geo in
-            VStack(spacing: 0) {
-                OrbZoneView(
-                    viewModel: viewModel,
-                    fullViewModel: fullViewModel,
-                    onCollapse: onCollapse
-                )
-                .frame(height: hasConversation ? geo.size.height * 0.45 : geo.size.height)
-                .animation(.easeInOut(duration: 0.3), value: hasConversation)
-
-                if hasConversation {
-                    Divider().background(cardBorder)
-                    ConversationZoneView(
+        VStack(spacing: 0) {
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    OrbZoneView(
                         viewModel: viewModel,
-                        onTextCommand: onTextCommand,
-                        onVoice: onVoice
+                        fullViewModel: fullViewModel,
+                        onCollapse: onCollapse
                     )
-                    .frame(height: geo.size.height * 0.55)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .frame(height: hasConversation ? geo.size.height * 0.45 : geo.size.height)
+                    .animation(.easeInOut(duration: 0.3), value: hasConversation)
+
+                    if hasConversation {
+                        Divider().background(cardBorder)
+                        ConversationZoneView(viewModel: viewModel)
+                            .frame(height: geo.size.height * 0.55)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
             }
+
+            DesktopInputBar(
+                viewModel: viewModel,
+                onTextCommand: onTextCommand,
+                onVoice: onVoice
+            )
         }
         .background(bgPrimary)
     }
