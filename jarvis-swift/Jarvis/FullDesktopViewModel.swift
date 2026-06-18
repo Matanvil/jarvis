@@ -64,6 +64,31 @@ final class FullDesktopViewModel: ObservableObject {
         activeTools = []
     }
 
+    enum LogSource: String, CaseIterable {
+        case commands = "Commands"
+        case analytics = "Analytics"
+        case errors = "Errors"
+
+        var path: String {
+            let base = NSHomeDirectory() + "/.jarvis/logs/"
+            switch self {
+            case .commands:  return base + "commands.log"
+            case .analytics: return base + "analytics.log"
+            case .errors:    return base + "errors.log"
+            }
+        }
+    }
+
+    func allLogLines() -> [String] { allLogLines(source: .commands) }
+
+    func allLogLines(source: LogSource) -> [String] {
+        guard let content = try? String(contentsOfFile: source.path, encoding: .utf8) else { return [] }
+        return content
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .reversed()
+    }
+
     // MARK: - Log polling
 
     private func pollLog() {

@@ -76,10 +76,10 @@ def _ensure_ollama_running() -> None:
 
 
 def _ensure_executor_server_running(config: dict) -> None:
-    """Start the executor inference server if local_first mode is active and it isn't already running.
-    Uses rapid-mlx when executor_rapid_mlx=True, mlx_lm.server otherwise."""
+    """Start the executor inference server if a local routing mode is active and it isn't already running.
+    Uses vllm_mlx.server when executor_rapid_mlx=True, mlx_lm.server otherwise."""
     ollama_cfg = config.get("ollama", {})
-    if ollama_cfg.get("routing_mode") != "local_first":
+    if ollama_cfg.get("routing_mode") not in ("local_first", "ollama_only", "ollama_first"):
         return
     base_host = ollama_cfg.get("host", "http://localhost:11434")
     executor_host = ollama_cfg.get("executor_host", "")
@@ -101,20 +101,22 @@ def _ensure_executor_server_running(config: dict) -> None:
     port = parsed.port or 8093
 
     if ollama_cfg.get("executor_rapid_mlx"):
-        rapid_bin = (
-            shutil.which("rapid-mlx")
-            or (p if (p := "/opt/homebrew/bin/rapid-mlx") and os.path.exists(p) else None)
+        python_bin = (
+            shutil.which("python3")
+            or shutil.which("python")
         )
-        if not rapid_bin:
-            logging.warning("[Jarvis] rapid-mlx binary not found — skipping executor auto-start")
+        if not python_bin:
+            logging.warning("[Jarvis] python not found — skipping vllm_mlx executor auto-start")
             return
+        max_tokens = str(ollama_cfg.get("executor_max_tokens", 8192))
         cmd = [
-            rapid_bin, "serve", executor_model,
-            "--port", str(port), "--host", "127.0.0.1",
-            "--enable-auto-tool-choice", "--tool-call-parser", "qwen3_coder_xml",
+            python_bin, "-m", "vllm_mlx.server",
+            "--model", executor_model,
+            "--port", str(port),
+            "--max-tokens", max_tokens,
         ]
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        logging.info("[Jarvis] rapid-mlx executor started: model=%s port=%d", executor_model, port)
+        logging.info("[Jarvis] vllm_mlx executor started: model=%s port=%d", executor_model, port)
     else:
         mlx_bin = (
             shutil.which("mlx_lm.server")

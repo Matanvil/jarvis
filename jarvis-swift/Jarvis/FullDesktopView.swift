@@ -231,8 +231,309 @@ struct ModelRoutingCard: View {
     }
 }
 
+// MARK: - Log row renderers
+
+private let logTextPrimary  = Color.white.opacity(0.90)
+private let logTextSecond   = Color.white.opacity(0.65)
+private let logTextDim      = Color.white.opacity(0.40)
+private let logAccent       = Color(red: 0.2, green: 0.75, blue: 1.0)
+private let logRowBg        = Color.white.opacity(0.04)
+private let logRowBorder    = Color.white.opacity(0.08)
+
+private func extractBetween(_ s: String, after: String, before: String) -> String? {
+    guard let a = s.range(of: after) else { return nil }
+    let sub = String(s[a.upperBound...])
+    guard let b = sub.range(of: before) else { return String(sub.prefix(300)) }
+    return String(sub[..<b.lowerBound])
+}
+
+struct CommandLogRow: View {
+    let raw: String
+
+    private var ts: String {
+        extractBetween(raw, after: "", before: " INFO") ?? ""
+    }
+    private var cmd: String {
+        extractBetween(raw, after: "cmd='", before: "' cwd=") ?? raw
+    }
+    private var durationMs: String? {
+        extractBetween(raw, after: "duration_ms=", before: " result=")
+    }
+    private var tokS: String? {
+        guard let v = extractBetween(raw, after: "'tok_s': ", before: ","),
+              v != "null" else { return nil }
+        return v
+    }
+    private var model: String? {
+        guard let v = extractBetween(raw, after: "'_model': '", before: "'"),
+              !v.isEmpty else { return nil }
+        return v
+    }
+    private var intent: String? {
+        guard let v = extractBetween(raw, after: "'_intent_class': '", before: "'"),
+              v != "null", !v.isEmpty else { return nil }
+        return v
+    }
+    private var speak: String? {
+        guard let v = extractBetween(raw, after: "'speak': '", before: "', 'display'"),
+              !v.isEmpty else { return nil }
+        return v
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .top, spacing: 6) {
+                Text(ts)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(logTextDim)
+                Spacer()
+                HStack(spacing: 4) {
+                    if let ms = durationMs { pill("\(ms)ms", color: .white.opacity(0.12)) }
+                    if let t = tokS        { pill("\(t) tok/s", color: logAccent.opacity(0.3)) }
+                    if let i = intent      { pill(i, color: Color.purple.opacity(0.35)) }
+                }
+            }
+            Text(cmd)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(logTextPrimary)
+                .textSelection(.enabled)
+            if let m = model {
+                Text(m)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(logAccent.opacity(0.8))
+            }
+            if let s = speak, !s.isEmpty {
+                Text(s)
+                    .font(.system(size: 11))
+                    .foregroundColor(logTextSecond)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(logRowBg)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(logRowBorder, lineWidth: 1))
+    }
+
+    private func pill(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            .foregroundColor(.white.opacity(0.85))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color)
+            .clipShape(Capsule())
+    }
+}
+
+struct AnalyticsLogRow: View {
+    let raw: String
+
+    private var parsed: [String: Any]? {
+        guard let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return obj
+    }
+    private var ts: String {
+        guard let ts = parsed?["ts"] as? Double else { return "" }
+        let d = Date(timeIntervalSince1970: ts)
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f.string(from: d)
+    }
+    private var data: [String: Any] { parsed?["data"] as? [String: Any] ?? [:] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(ts)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(logTextDim)
+                Spacer()
+                if let escalated = data["escalated"] as? Bool, escalated {
+                    pill("ESCALATED", color: .orange.opacity(0.45))
+                }
+            }
+            HStack(spacing: 5) {
+                if let ms = data["duration_ms"] as? Int  { pill("\(ms)ms", color: .white.opacity(0.12)) }
+                if let ttft = data["ttft_ms"] as? Int     { pill("ttft \(ttft)ms", color: .white.opacity(0.12)) }
+                if let t = data["tok_s"] as? Double       { pill(String(format: "%.1f tok/s", t), color: logAccent.opacity(0.3)) }
+                if let n = data["gen_tokens"] as? Int     { pill("\(n) tokens", color: .white.opacity(0.12)) }
+            }
+            if let model = data["model"] as? String {
+                Text(model)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(logAccent.opacity(0.8))
+                    .textSelection(.enabled)
+            }
+            if let reason = data["escalation_reason"] as? String {
+                Text(reason)
+                    .font(.system(size: 11))
+                    .foregroundColor(Color.orange.opacity(0.9))
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(logRowBg)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(logRowBorder, lineWidth: 1))
+    }
+
+    private func pill(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            .foregroundColor(.white.opacity(0.85))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(color).clipShape(Capsule())
+    }
+}
+
+struct ErrorLogRow: View {
+    let raw: String
+
+    private var isTimestamped: Bool { raw.count > 19 && raw.first?.isNumber == true }
+    private var isError: Bool { raw.contains("ERROR") || raw.contains("Error") || raw.contains("Exception") }
+    private var isTraceback: Bool { raw.hasPrefix("  File") || raw.hasPrefix("Traceback") }
+
+    var body: some View {
+        Text(raw)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundColor(rowColor)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, isTimestamped ? 4 : 1)
+    }
+
+    private var rowColor: Color {
+        if isError { return Color(red: 1.0, green: 0.35, blue: 0.35) }
+        if isTraceback { return Color(red: 1.0, green: 0.65, blue: 0.2) }
+        if isTimestamped { return logTextSecond }
+        return logTextDim
+    }
+}
+
+// MARK: - Log Modal
+
+struct LogModalView: View {
+    @ObservedObject var fullViewModel: FullDesktopViewModel
+    @Binding var isPresented: Bool
+
+    private let pageSize = 100
+    @State private var source: FullDesktopViewModel.LogSource = .commands
+    @State private var page = 0
+    @State private var lines: [String] = []
+
+    private var totalPages: Int { max(1, Int(ceil(Double(lines.count) / Double(pageSize)))) }
+    private var pageLines: [String] {
+        let start = page * pageSize
+        let end = min(start + pageSize, lines.count)
+        guard start < lines.count else { return [] }
+        return Array(lines[start..<end])
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 12) {
+                Text("LOGS")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(accentCyan)
+                Picker("", selection: $source) {
+                    ForEach(FullDesktopViewModel.LogSource.allCases, id: \.self) { s in
+                        Text(s.rawValue).tag(s)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 260)
+                .onChange(of: source) { _ in reload() }
+                Spacer()
+                Text("\(lines.count) entries")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(logTextDim)
+                Button(action: { isPresented = false }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(bgPrimary)
+
+            Divider().background(cardBorder)
+
+            // Log rows
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: source == .errors ? 0 : 6) {
+                    ForEach(Array(pageLines.enumerated()), id: \.offset) { _, line in
+                        switch source {
+                        case .commands:  CommandLogRow(raw: line)
+                        case .analytics: AnalyticsLogRow(raw: line)
+                        case .errors:    ErrorLogRow(raw: line)
+                        }
+                    }
+                }
+                .padding(source == .errors ? 0 : 10)
+            }
+            .background(bgSurface)
+
+            Divider().background(cardBorder)
+
+            // Pagination
+            HStack(spacing: 16) {
+                Button(action: { page = max(0, page - 1) }) {
+                    Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(page > 0 ? accentCyan : textDim)
+                .disabled(page == 0)
+
+                Text("Page \(page + 1) of \(totalPages)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(textSecond)
+
+                Button(action: { page = min(totalPages - 1, page + 1) }) {
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(page < totalPages - 1 ? accentCyan : textDim)
+                .disabled(page >= totalPages - 1)
+
+                Spacer()
+
+                Button(action: reload) {
+                    Label("Refresh", systemImage: "arrow.clockwise").font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(accentCyan)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(bgPrimary)
+        }
+        .frame(width: 820, height: 600)
+        .background(bgSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(cardBorder, lineWidth: 1))
+        .onAppear { reload() }
+        .preferredColorScheme(.dark)
+    }
+
+    private func reload() {
+        lines = fullViewModel.allLogLines(source: source)
+        page = 0
+    }
+}
+
 struct LiveLogCard: View {
     @ObservedObject var fullViewModel: FullDesktopViewModel
+    @State private var showModal = false
 
     var body: some View {
         DesktopCard(icon: "doc.text", label: "LIVE LOG") {
@@ -244,8 +545,18 @@ struct LiveLogCard: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+                HStack {
+                    Spacer()
+                    Text("tap to expand")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundColor(textDim.opacity(0.5))
+                }
             }
             .padding(12)
+        }
+        .onTapGesture { showModal = true }
+        .sheet(isPresented: $showModal) {
+            LogModalView(fullViewModel: fullViewModel, isPresented: $showModal)
         }
     }
 }

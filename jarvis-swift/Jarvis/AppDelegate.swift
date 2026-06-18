@@ -65,6 +65,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             onNewConversation: { [weak self] in
                 self?.hudViewModel.newConversation()
             },
+            onToggleHUD: { [weak self] in
+                self?.toggleHUD()
+            },
             onOpenFullDesktop: { [weak self] in
                 self?.hudViewModel.expandToFullDesktop()
             }
@@ -444,6 +447,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         DispatchQueue.main.async {
             self.fullDesktopWindow?.alphaValue = 0
             self.hudWindow?.orderOut(nil)
+            NSApp.activate(ignoringOtherApps: true)
             self.fullDesktopWindow?.makeKeyAndOrderFront(nil)
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.15
@@ -473,6 +477,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             guard self.hudViewModel.windowMode == .hud else { return }
             self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
             self.hudWindow?.orderFront(nil)
+        }
+    }
+
+    func toggleHUD() {
+        if hudViewModel.windowMode == .fullDesktop {
+            hudViewModel.collapseToHUD()
+            return
+        }
+        if hudWindow?.isVisible == true {
+            hideHUD()
+        } else {
+            expandHUD()
         }
     }
 
@@ -521,6 +537,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             viewModel: hudViewModel,
             onDismiss:     { [weak self] in self?.hideHUD() },
             onMinimize:    { [weak self] in self?.minimizeHUD() },
+            onActivate:    { [weak self] in self?.expandHUD() },
             onExpand:      { [weak self] in self?.hudViewModel.expandToFullDesktop() },
             onApprove:     { [weak self] in self?.handleApprove() },
             onDeny:        { [weak self] in self?.handleDeny() },

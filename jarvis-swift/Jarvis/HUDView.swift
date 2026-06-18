@@ -13,10 +13,11 @@ private struct ThreadHeightKey: PreferenceKey {
 
 struct HUDView: View {
     @ObservedObject var viewModel: HUDViewModel
-    var onDismiss:  () -> Void = {}
-    var onMinimize: () -> Void = {}
-    var onExpand:   () -> Void = {}
-    var onApprove:  () -> Void = {}
+    var onDismiss:   () -> Void = {}
+    var onMinimize:  () -> Void = {}
+    var onActivate:  () -> Void = {}
+    var onExpand:    () -> Void = {}
+    var onApprove:   () -> Void = {}
     var onDeny:     () -> Void = {}
     var onTextCommand: (String) -> Void = { _ in }
 
@@ -42,7 +43,7 @@ struct HUDView: View {
         Group {
             if viewModel.state == .minimized {
                 ArcReactorView()
-                    .onTapGesture(perform: onExpand)
+                    .onTapGesture(perform: onActivate)
             } else if viewModel.state != .hidden {
                 ZStack(alignment: .topTrailing) {
                     VStack(spacing: 0) {

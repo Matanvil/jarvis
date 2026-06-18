@@ -316,6 +316,8 @@ class _OllamaLoopState:
     composing_emitted: bool = False
     gen_metrics: dict = field(default_factory=dict)
     wrap_up_nudged: bool = False
+    intent_class: str | None = None
+    thinking_disabled: bool = False
 
 
 class OllamaAgent:
@@ -416,6 +418,7 @@ class OllamaAgent:
             cwd=cwd,
             command_id=command_id,
             user_text=user_text,
+            intent_class=intent_class,
         )
         return self._outer_loop(state, step_callback)
 
@@ -448,6 +451,8 @@ class OllamaAgent:
                 payload = {"model": self._model, "messages": state.messages, "tools": self._build_tool_list()}
                 if self._chat_template_kwargs:
                     payload["chat_template_kwargs"] = self._chat_template_kwargs
+                thinking_on = state.intent_class == "complex_reasoning" and not state.thinking_disabled
+                payload["enable_thinking"] = thinking_on
 
                 composing_state = [state.composing_emitted]
                 call_metrics: dict = {}
@@ -459,6 +464,13 @@ class OllamaAgent:
                 if finish == "stop" or not msg.get("tool_calls"):
                     text = _clean_ollama_text(msg.get("content") or "")
                     if not text and not state.tool_calls_made and finish != "stop":
+                        # Thinking may have exhausted the token budget leaving empty content.
+                        # Retry once with thinking disabled before escalating.
+                        if thinking_on and not state.thinking_disabled:
+                            state.thinking_disabled = True
+                            state.steps_used -= 1
+                            state.composing_emitted = False
+                            continue
                         raise EscalateToCloud("Empty response from local executor — server may have crashed")
 
                     # Genuine final answer: text is not planning-intent. Return now.
@@ -476,6 +488,9 @@ class OllamaAgent:
                         state.composing_emitted = False  # allow "Composing response…" to refire
                         if text:  # never append an empty assistant message — some backends reject it
                             state.messages.append({"role": "assistant", "content": text})
+                        # If thinking was on and produced nothing, disable it for the retry
+                        if not text and thinking_on:
+                            state.thinking_disabled = True
                         if not text:
                             nudge = (
                                 "You returned an empty response. Based on the tool results so far, "

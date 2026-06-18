@@ -339,7 +339,7 @@ class Router:
                                       intent_class=intent_class, start=start)
             except EscalateToCloud as e:
                 if mode == "ollama_only":
-                    msg = f"Local model unavailable: {e.reason}"
+                    msg = "I wasn't able to complete that locally. Please try rephrasing or restart the server if this keeps happening."
                     result = {"speak": msg, "display": msg, "steps": []}
                     return self._annotate(result, agent="ollama", model=self._ollama_model,
                                           escalated=True, escalation_reason=f"suppressed:ollama_only:{e.reason}",

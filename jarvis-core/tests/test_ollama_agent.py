@@ -929,3 +929,66 @@ def test_planning_text_after_tool_calls_triggers_nudge(agent):
 
     assert nudge_fired[0], "clear SSE not emitted when planning text followed tool calls"
     assert "PR #39" in result["speak"]
+
+
+# ── enable_thinking retry ─────────────────────────────────────────────────────
+
+def _empty_length_response() -> MagicMock:
+    """Simulate model returning empty content with finish_reason=length (token budget exhausted)."""
+    msg = MagicMock()
+    msg.json.return_value = {
+        "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": None},
+                     "finish_reason": "length"}]
+    }
+    return msg
+
+
+def test_thinking_exhausted_retries_without_thinking(agent):
+    """When complex_reasoning + enable_thinking exhausts token budget, retry with thinking off."""
+    payloads_sent = []
+
+    def fake_post(url, json=None, **kwargs):
+        payloads_sent.append(json or {})
+        # First call (thinking on) → empty/length; second call (thinking off) → real answer
+        if json and json.get("enable_thinking", False):
+            return _empty_length_response()
+        return _stop_response("Noam Shazeer invented the Transformer attention mechanism.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            result = agent.run("tell me about Noam Shazeer", intent_class="complex_reasoning")
+
+    assert result["speak"], "Expected a non-empty answer after thinking retry"
+    assert "Shazeer" in result["speak"] or "Transformer" in result["speak"]
+
+    thinking_on_calls = [p for p in payloads_sent if p.get("enable_thinking") is True]
+    thinking_off_calls = [p for p in payloads_sent if p.get("enable_thinking") is False]
+    assert len(thinking_on_calls) >= 1, "Expected at least one thinking=True attempt"
+    assert len(thinking_off_calls) >= 1, "Expected fallback attempt with thinking=False"
+
+
+def test_thinking_not_used_for_non_complex_intents(agent):
+    """enable_thinking must be False for non-complex_reasoning intent classes."""
+    payloads_sent = []
+
+    def fake_post(url, json=None, **kwargs):
+        payloads_sent.append(json or {})
+        return _stop_response("The answer is 42.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            agent.run("what is 6 times 7", intent_class="read_only")
+
+    for p in payloads_sent:
+        assert p.get("enable_thinking") is False, "enable_thinking must be False for read_only intent"
+
+
+def test_thinking_escalates_if_retry_also_empty(agent):
+    """If both thinking=True and thinking=False return empty, escalate to cloud."""
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", return_value=_empty_length_response()):
+            with pytest.raises(EscalateToCloud):
+                agent.run("something complex", intent_class="complex_reasoning")

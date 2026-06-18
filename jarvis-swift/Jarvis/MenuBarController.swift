@@ -10,17 +10,20 @@ final class MenuBarController {
     private let onRestart: () -> Void
     private let onSettings: () -> Void
     private let onNewConversation: () -> Void
+    private let onToggleHUD: () -> Void
     private let onOpenFullDesktop: () -> Void
 
     init(
         onRestart: @escaping () -> Void,
         onSettings: @escaping () -> Void,
         onNewConversation: @escaping () -> Void,
+        onToggleHUD: @escaping () -> Void,
         onOpenFullDesktop: @escaping () -> Void
     ) {
         self.onRestart = onRestart
         self.onSettings = onSettings
         self.onNewConversation = onNewConversation
+        self.onToggleHUD = onToggleHUD
         self.onOpenFullDesktop = onOpenFullDesktop
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setupButton()
@@ -42,7 +45,7 @@ final class MenuBarController {
             statusItem.button?.performClick(nil)
             statusItem.menu = nil
         } else {
-            onOpenFullDesktop()
+            onToggleHUD()
         }
     }
 
@@ -55,6 +58,10 @@ final class MenuBarController {
         let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
+        menu.addItem(NSMenuItem.separator())
+        let fullDesktop = NSMenuItem(title: "Open Full Desktop", action: #selector(openFullDesktop), keyEquivalent: "")
+        fullDesktop.target = self
+        menu.addItem(fullDesktop)
         menu.addItem(NSMenuItem.separator())
         let newConvo = NSMenuItem(
             title: "New Conversation",
@@ -88,6 +95,10 @@ final class MenuBarController {
 
     @objc private func openSettings() {
         onSettings()
+    }
+
+    @objc private func openFullDesktop() {
+        onOpenFullDesktop()
     }
 
     @objc private func restartServer() {
