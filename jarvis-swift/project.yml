@@ -19,10 +19,11 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_ENTITLEMENTS: Jarvis/Jarvis.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Jarvis/Info.plist
       properties:
-        LSUIElement: true
+        LSUIElement: false
         NSMicrophoneUsageDescription: "Jarvis uses the microphone for voice commands."
         NSSpeechRecognitionUsageDescription: "Jarvis uses speech recognition to transcribe your voice commands."
         NSHumanReadableCopyright: ""
