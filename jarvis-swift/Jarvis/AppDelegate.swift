@@ -38,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var audioController: AudioController!
     private var cancellables = Set<AnyCancellable>()
     private var alertListenerTask: Task<Void, Never>?
+    private var escKeyMonitor: Any?
 
     // MARK: - Lifecycle
 
@@ -110,6 +111,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         startAlertListener()
         installToApplicationsIfNeeded()
         checkFullDiskAccess()
+        installEscKeyMonitor()
     }
 
     // MARK: - Alert Listener
@@ -579,5 +581,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     private func handleDeny() {
         Task { @MainActor in audioController.submitApproval(approved: false) }
+    }
+
+    private func installEscKeyMonitor() {
+        escKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // ESC key code is 53
+            guard event.keyCode == 53, let self else { return event }
+            Task { @MainActor in self.audioController.abortCurrentCommand() }
+            return nil  // consume the event
+        }
     }
 }
