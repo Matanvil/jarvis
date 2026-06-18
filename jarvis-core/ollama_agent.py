@@ -330,6 +330,7 @@ class _OllamaLoopState:
     wrap_up_nudged: bool = False
     intent_class: str | None = None
     thinking_disabled: bool = False
+    finalize_nudge_count: int = 0
 
 
 class OllamaAgent:
@@ -590,6 +591,20 @@ class OllamaAgent:
             # finalize: model signals it has enough info — return immediately
             if name == "finalize":
                 answer = args.get("answer", "") if isinstance(args, dict) else ""
+                # Reject finalize() with planning text — model called tools but still
+                # wrote an intent sentence instead of a real answer.
+                if _is_planning_text(answer) and state.finalize_nudge_count < 2:
+                    state.finalize_nudge_count += 1
+                    state.steps_used -= 1  # don't count this against the budget
+                    if step_callback:
+                        step_callback({"type": "clear"})
+                    state.messages.append({"role": "user", "content": (
+                        "finalize() was called with planning text instead of an actual answer. "
+                        "You already ran the tools — call finalize() NOW with the real result "
+                        "from those tool calls. Do NOT write 'Let me...', 'I'll...', or any "
+                        "planning sentence. Give the user the actual answer."
+                    )})
+                    continue
                 step = {"tool": "finalize", "input_summary": answer[:100],
                         "result_summary": "finalized", "milestone": len(state.steps) == 0}
                 state.steps.append(step)
