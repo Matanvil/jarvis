@@ -214,7 +214,7 @@ app = FastAPI(lifespan=lifespan)
 # POST /command and get arbitrary shell execution. Enforced only when the token is
 # set — a manually-run dev server (or the test client) stays open.
 _AUTH_TOKEN = os.environ.get("JARVIS_AUTH_TOKEN", "")
-_AUTH_EXEMPT_PATHS = {"/health"}
+_AUTH_EXEMPT_PATHS = {"/health", "/commands/abort"}
 
 
 @app.middleware("http")
