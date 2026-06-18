@@ -153,6 +153,14 @@ final class JarvisClient {
         }
     }
 
+    /// POSTs to /commands/abort — no auth token required (exempt path).
+    func abort() async {
+        guard let url = URL(string: "\(baseURL)/commands/abort") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        _ = try? await quickSession.data(for: request)
+    }
+
     /// Returns true (approved), false (denied), or nil (unclear — caller should stay in approval state)
     func classifyApproval(text: String) async throws -> Bool? {
         var request = URLRequest(url: URL(string: "\(baseURL)/approve/classify")!)

@@ -365,6 +365,26 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         }
     }
 
+    // MARK: - Abort
+
+    func abortCurrentCommand() {
+        switch viewModel.state {
+        case .listening, .thinking, .executing, .approval:
+            break
+        default:
+            return
+        }
+        viewModel.finalizeTurn(response: "Aborted.")
+        showHUD(.denied)
+        stopStreamTimer()
+        viewModel.clearStreamingBuffer()
+        Task { await client.abort() }
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await MainActor.run { self.hideHUD() }
+        }
+    }
+
     // MARK: - Config
 
     func refreshConfig() async {
