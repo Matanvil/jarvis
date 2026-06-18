@@ -450,7 +450,7 @@ struct LogModalView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 260)
-                .onChange(of: source) { _ in reload() }
+                .onChange(of: source) { _, _ in reload() }
                 Spacer()
                 Text("\(lines.count) entries")
                     .font(.system(size: 10, design: .monospaced))
@@ -849,6 +849,7 @@ struct DesktopInputBar: View {
 
 struct ConversationZoneView: View {
     @ObservedObject var viewModel: HUDViewModel
+    @State private var isAtBottom = true
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -858,14 +859,24 @@ struct ConversationZoneView: View {
                         TurnRowView(turn: turn, streamingText: viewModel.streamingBuffer)
                             .id(turn.id)
                     }
+                    // Sentinel: visible ↔ at bottom; drives isAtBottom state.
+                    Color.clear.frame(height: 1)
+                        .id("convBottom")
+                        .onAppear { isAtBottom = true }
+                        .onDisappear { isAtBottom = false }
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 14)
             }
-            .onChange(of: viewModel.turns.count) { _ in
-                if let last = viewModel.turns.last {
-                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                }
+            // New turn: always snap to bottom and re-enable auto-scroll.
+            .onChange(of: viewModel.turns.count) { _, _ in
+                isAtBottom = true
+                withAnimation { proxy.scrollTo("convBottom", anchor: .bottom) }
+            }
+            // Streaming tokens: follow only when pinned to bottom.
+            .onChange(of: viewModel.streamingBuffer) { _, _ in
+                guard isAtBottom else { return }
+                proxy.scrollTo("convBottom", anchor: .bottom)
             }
         }
     }

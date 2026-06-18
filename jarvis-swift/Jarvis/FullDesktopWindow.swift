@@ -28,6 +28,7 @@ final class FullDesktopWindow: NSWindow {
         titlebarAppearsTransparent = true
         titleVisibility = .hidden
         isReleasedWhenClosed = false
+        hidesOnDeactivate = false
         minSize = CGSize(width: 1024, height: 700)
         backgroundColor = NSColor(red: 0.039, green: 0.059, blue: 0.098, alpha: 1)
         collectionBehavior = [.managed, .participatesInCycle]
