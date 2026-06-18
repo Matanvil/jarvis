@@ -33,6 +33,17 @@ def _is_planning_text(text: str) -> bool:
     return bool(_PLANNING_RE.match(first_line))
 
 
+_ACTION_TRACE_RE = re.compile(r'^actions\s*:', re.IGNORECASE)
+
+
+def _is_action_trace(text: str) -> bool:
+    """Return True if the model echoed tool results as 'Actions: ...' text instead
+    of calling finalize(). This leaks implementation details into the response and
+    poisons conversational history — trigger a nudge to call finalize properly."""
+    first_line = text.strip().split("\n")[0].strip()
+    return bool(_ACTION_TRACE_RE.match(first_line))
+
+
 # Appended to the base system prompt for local models that need extra guidance
 _OLLAMA_EXTRA = """
 CRITICAL RULES FOR THIS MODEL:
@@ -46,6 +57,7 @@ CRITICAL RULES FOR THIS MODEL:
 - You have a limited number of tool calls. Use only what is needed — typically 1-3 calls. Do not explore tangents.
 - CODING TOOLS RULE: After calling coding_ask, coding_plan, or coding_review — call finalize IMMEDIATELY. These tools return complete answers. Do NOT call shell_run, file_read, list_dir, find_files, or any other tool after them. One coding tool call → finalize. That is the entire sequence.
 - NEVER call mkdir, file_write, or any filesystem-modifying command unless the user explicitly asked you to create or write something. Answering a question does not require creating directories or files.
+- NEVER write "Actions:" or echo tool call results as text in your response. After using a tool, call finalize() with a clean answer — do not describe what you did.
 """
 
 
@@ -316,6 +328,9 @@ class _OllamaLoopState:
     composing_emitted: bool = False
     gen_metrics: dict = field(default_factory=dict)
     wrap_up_nudged: bool = False
+    intent_class: str | None = None
+    thinking_disabled: bool = False
+    finalize_nudge_count: int = 0
 
 
 class OllamaAgent:
@@ -416,6 +431,7 @@ class OllamaAgent:
             cwd=cwd,
             command_id=command_id,
             user_text=user_text,
+            intent_class=intent_class,
         )
         return self._outer_loop(state, step_callback)
 
@@ -448,6 +464,8 @@ class OllamaAgent:
                 payload = {"model": self._model, "messages": state.messages, "tools": self._build_tool_list()}
                 if self._chat_template_kwargs:
                     payload["chat_template_kwargs"] = self._chat_template_kwargs
+                thinking_on = state.intent_class == "complex_reasoning" and not state.thinking_disabled
+                payload["enable_thinking"] = thinking_on
 
                 composing_state = [state.composing_emitted]
                 call_metrics: dict = {}
@@ -459,24 +477,39 @@ class OllamaAgent:
                 if finish == "stop" or not msg.get("tool_calls"):
                     text = _clean_ollama_text(msg.get("content") or "")
                     if not text and not state.tool_calls_made and finish != "stop":
+                        # Thinking may have exhausted the token budget leaving empty content.
+                        # Retry once with thinking disabled before escalating.
+                        if thinking_on and not state.thinking_disabled:
+                            state.thinking_disabled = True
+                            state.steps_used -= 1
+                            state.composing_emitted = False
+                            continue
                         raise EscalateToCloud("Empty response from local executor — server may have crashed")
 
-                    # Genuine final answer: text is not planning-intent. Return now.
-                    if not _is_planning_text(text):
+                    # Genuine final answer: text is not planning-intent or an action trace. Return now.
+                    if not _is_planning_text(text) and not _is_action_trace(text):
                         result = format_response(text, state.tool_calls_made)
                         result["steps"] = state.steps
                         result.update(state.gen_metrics)
                         return result
 
-                    # Planning text returned — model wants to continue but didn't call a tool.
-                    # Nudge regardless of whether previous tool calls were made.
+                    # Planning text or action trace returned — nudge.
                     if state.no_tool_retries < 2:
                         state.no_tool_retries += 1
                         state.steps_used -= 1  # don't burn a step on the nudge
                         state.composing_emitted = False  # allow "Composing response…" to refire
                         if text:  # never append an empty assistant message — some backends reject it
                             state.messages.append({"role": "assistant", "content": text})
-                        if not text:
+                        # If thinking was on and produced nothing, disable it for the retry
+                        if not text and thinking_on:
+                            state.thinking_disabled = True
+                        if _is_action_trace(text):
+                            nudge = (
+                                "Your response echoes tool output as 'Actions: ...' text. "
+                                "Do NOT write tool call results in your response. "
+                                "Call finalize() now with a clean, direct answer to the user's question."
+                            )
+                        elif not text:
                             nudge = (
                                 "You returned an empty response. Based on the tool results so far, "
                                 "either call the next tool to continue, or call finalize() with your answer."
@@ -558,6 +591,20 @@ class OllamaAgent:
             # finalize: model signals it has enough info — return immediately
             if name == "finalize":
                 answer = args.get("answer", "") if isinstance(args, dict) else ""
+                # Reject finalize() with planning text — model called tools but still
+                # wrote an intent sentence instead of a real answer.
+                if _is_planning_text(answer) and state.finalize_nudge_count < 2:
+                    state.finalize_nudge_count += 1
+                    state.steps_used -= 1  # don't count this against the budget
+                    if step_callback:
+                        step_callback({"type": "clear"})
+                    state.messages.append({"role": "user", "content": (
+                        "finalize() was called with planning text instead of an actual answer. "
+                        "You already ran the tools — call finalize() NOW with the real result "
+                        "from those tool calls. Do NOT write 'Let me...', 'I'll...', or any "
+                        "planning sentence. Give the user the actual answer."
+                    )})
+                    continue
                 step = {"tool": "finalize", "input_summary": answer[:100],
                         "result_summary": "finalized", "milestone": len(state.steps) == 0}
                 state.steps.append(step)

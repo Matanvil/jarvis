@@ -18,6 +18,7 @@ private final class TransparentHostingView<Content: View>: NSHostingView<Content
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
 
     private var pythonProcess: Process?
@@ -26,6 +27,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     private var lastRestartTime: Date = .distantPast
     private var healthTimer: Timer?
     private var hudWindow: HUDWindow?
+    private var fullDesktopWindow: FullDesktopWindow?
+    private let fullDesktopViewModel = FullDesktopViewModel()
+    private let metricsProvider = SystemMetricsProvider()
     private var hudView: TransparentHostingView<HUDView>?
     private let hudViewModel = HUDViewModel.shared
     private var lastVisibleState: HUDState = .hidden
@@ -60,12 +64,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             },
             onNewConversation: { [weak self] in
                 self?.hudViewModel.newConversation()
+            },
+            onToggleHUD: { [weak self] in
+                self?.toggleHUD()
+            },
+            onOpenFullDesktop: { [weak self] in
+                self?.hudViewModel.expandToFullDesktop()
             }
         )
         jarvisClient = JarvisClient()
         audioController = AudioController(
             client: jarvisClient,
             viewModel: hudViewModel,
+            fullDesktopViewModel: fullDesktopViewModel,
             showHUD: { [weak self] state in self?.showHUD(state) },
             hideHUD: { [weak self] in self?.hideHUD() }
         )
@@ -82,8 +93,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             }
             .store(in: &cancellables)
 
+        hudViewModel.$windowMode
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] mode in
+                switch mode {
+                case .fullDesktop: self?.openFullDesktopMode()
+                case .hud:         self?.closeFullDesktopMode()
+                }
+            }
+            .store(in: &cancellables)
+
         minimizeHUD()
         audioController.start()
+        metricsProvider.start()
+        fullDesktopViewModel.start()
         startAlertListener()
         installToApplicationsIfNeeded()
         checkFullDiskAccess()
@@ -174,6 +197,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         alertListenerTask?.cancel()
         healthTimer?.invalidate()
         hudViewModel.saveSessionSync()
+        metricsProvider.stop()
+        fullDesktopViewModel.stop()
         if let proc = pythonProcess, proc.processIdentifier > 0 {
             proc.terminate()  // SIGTERM — give uvicorn a chance to flush
             let done = DispatchSemaphore(value: 0)
@@ -418,12 +443,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     // MARK: - HUD
 
+    func openFullDesktopMode() {
+        DispatchQueue.main.async {
+            self.fullDesktopWindow?.alphaValue = 0
+            self.hudWindow?.orderOut(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            self.fullDesktopWindow?.makeKeyAndOrderFront(nil)
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.15
+                self.fullDesktopWindow?.animator().alphaValue = 1
+            }
+        }
+    }
+
+    func closeFullDesktopMode() {
+        DispatchQueue.main.async {
+            guard self.fullDesktopWindow?.isVisible == true else { return }
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.15
+                self.fullDesktopWindow?.animator().alphaValue = 0
+            }, completionHandler: {
+                self.fullDesktopWindow?.orderOut(nil)
+                self.fullDesktopWindow?.alphaValue = 1
+                self.hudWindow?.orderFront(nil)
+            })
+        }
+    }
+
     func showHUD(_ state: HUDState) {
         DispatchQueue.main.async {
             self.lastVisibleState = state
             self.hudViewModel.state = state
+            guard self.hudViewModel.windowMode == .hud else { return }
             self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
             self.hudWindow?.orderFront(nil)
+        }
+    }
+
+    func toggleHUD() {
+        if hudViewModel.windowMode == .fullDesktop {
+            hudViewModel.collapseToHUD()
+            return
+        }
+        if hudWindow?.isVisible == true {
+            hideHUD()
+        } else {
+            expandHUD()
         }
     }
 
@@ -443,6 +508,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                 self.lastVisibleState = self.hudViewModel.state
             }
             self.hudViewModel.state = .minimized
+            guard self.hudViewModel.windowMode == .hud else { return }
             self.hudWindow?.resizeForMinimized()
             self.hudWindow?.orderFront(nil)
         }
@@ -453,12 +519,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             guard self.lastVisibleState != .hidden else {
                 // No prior conversation — open HUD with text input focused.
                 self.hudViewModel.state = .response(text: "")
+                guard self.hudViewModel.windowMode == .hud else { return }
                 self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
                 self.hudWindow?.makeKeyAndOrderFront(nil)
                 self.hudViewModel.focusTextInput = true
                 return
             }
             self.hudViewModel.state = self.lastVisibleState
+            guard self.hudViewModel.windowMode == .hud else { return }
             self.hudWindow?.resizeForExpanded(toHeight: self.hudViewModel.contentHeight)
             self.hudWindow?.orderFront(nil)
         }
@@ -469,7 +537,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             viewModel: hudViewModel,
             onDismiss:     { [weak self] in self?.hideHUD() },
             onMinimize:    { [weak self] in self?.minimizeHUD() },
-            onExpand:      { [weak self] in self?.expandHUD() },
+            onActivate:    { [weak self] in self?.expandHUD() },
+            onExpand:      { [weak self] in self?.hudViewModel.expandToFullDesktop() },
             onApprove:     { [weak self] in self?.handleApprove() },
             onDeny:        { [weak self] in self?.handleDeny() },
             onTextCommand: { [weak self] text in Task { @MainActor in self?.audioController.submitTextCommand(text: text) } }
@@ -484,6 +553,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         window.contentView = hostingView
         hudView = hostingView
         hudWindow = window
+
+        fullDesktopWindow = FullDesktopWindow(
+            viewModel: hudViewModel,
+            fullViewModel: fullDesktopViewModel,
+            metricsProvider: metricsProvider,
+            onCollapse: { [weak self] in self?.hudViewModel.collapseToHUD() },
+            onTextCommand: { [weak self] text in
+                Task { @MainActor in self?.audioController.submitTextCommand(text: text) }
+            },
+            onVoice: { [weak self] in
+                Task { @MainActor in self?.audioController.triggerVoiceInput() }
+            },
+            onSettings: {
+                SettingsWindowController.shared.open()
+            }
+        )
     }
 
     private func handleApprove() {

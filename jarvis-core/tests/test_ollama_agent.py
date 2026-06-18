@@ -929,3 +929,176 @@ def test_planning_text_after_tool_calls_triggers_nudge(agent):
 
     assert nudge_fired[0], "clear SSE not emitted when planning text followed tool calls"
     assert "PR #39" in result["speak"]
+
+
+# ── action trace detection ───────────────────────────────────────────────────
+
+def test_action_trace_response_triggers_nudge_and_retry(agent):
+    """Model returning 'Actions: ...' text must be nudged to call finalize() instead."""
+    action_trace = (
+        "Actions:\n"
+        "- shell_run({'command': 'date'}) → exit_code=0\nstdout=Wednesday\n\nResult: Today is Wednesday."
+    )
+    responses = [
+        _stop_response(action_trace),
+        _stop_response("Today is Wednesday, June 18th."),
+    ]
+    idx = [0]
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=lambda url, json=None, **kw: (idx.__setitem__(0, idx[0]+1) or responses[idx[0]-1])):
+            result = agent.run("what day is it today?")
+    assert "Wednesday" in result["speak"]
+    assert not result["speak"].startswith("Actions:"), "action trace must not leak into final answer"
+
+
+def test_action_trace_does_not_enter_history_as_valid_answer(agent):
+    """The 'Actions:' response should be appended to messages as assistant content
+    (for context) but the next user message should be a nudge, not a finalize return."""
+    action_trace = "Actions:\n- shell_run({'command': 'date'}) → exit_code=0\nstdout=Mon\n\nResult: Monday."
+    calls = []
+    def fake_post(url, json=None, **kw):
+        calls.append(json)
+        if len(calls) == 1:
+            return _stop_response(action_trace)
+        return _stop_response("It's Monday.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            result = agent.run("what day is it?")
+
+    # Second call's messages should contain a nudge about the Actions: format
+    assert len(calls) >= 2
+    messages_in_second_call = calls[1].get("messages", [])
+    user_nudge = next(
+        (m for m in messages_in_second_call if m["role"] == "user" and "finalize" in m["content"].lower()),
+        None
+    )
+    assert user_nudge is not None, "nudge message about finalize() must be sent after action trace"
+    assert "It's Monday" in result["speak"]
+
+
+# ── enable_thinking retry ─────────────────────────────────────────────────────
+
+def _empty_length_response() -> MagicMock:
+    """Simulate model returning empty content with finish_reason=length (token budget exhausted)."""
+    msg = MagicMock()
+    msg.json.return_value = {
+        "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": None},
+                     "finish_reason": "length"}]
+    }
+    return msg
+
+
+def test_thinking_exhausted_retries_without_thinking(agent):
+    """When complex_reasoning + enable_thinking exhausts token budget, retry with thinking off."""
+    payloads_sent = []
+
+    def fake_post(url, json=None, **kwargs):
+        payloads_sent.append(json or {})
+        # First call (thinking on) → empty/length; second call (thinking off) → real answer
+        if json and json.get("enable_thinking", False):
+            return _empty_length_response()
+        return _stop_response("Noam Shazeer invented the Transformer attention mechanism.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            result = agent.run("tell me about Noam Shazeer", intent_class="complex_reasoning")
+
+    assert result["speak"], "Expected a non-empty answer after thinking retry"
+    assert "Shazeer" in result["speak"] or "Transformer" in result["speak"]
+
+    thinking_on_calls = [p for p in payloads_sent if p.get("enable_thinking") is True]
+    thinking_off_calls = [p for p in payloads_sent if p.get("enable_thinking") is False]
+    assert len(thinking_on_calls) >= 1, "Expected at least one thinking=True attempt"
+    assert len(thinking_off_calls) >= 1, "Expected fallback attempt with thinking=False"
+
+
+def test_thinking_not_used_for_non_complex_intents(agent):
+    """enable_thinking must be False for non-complex_reasoning intent classes."""
+    payloads_sent = []
+
+    def fake_post(url, json=None, **kwargs):
+        payloads_sent.append(json or {})
+        return _stop_response("The answer is 42.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            agent.run("what is 6 times 7", intent_class="read_only")
+
+    for p in payloads_sent:
+        assert p.get("enable_thinking") is False, "enable_thinking must be False for read_only intent"
+
+
+def test_thinking_escalates_if_retry_also_empty(agent):
+    """If both thinking=True and thinking=False return empty, escalate to cloud."""
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", return_value=_empty_length_response()):
+            with pytest.raises(EscalateToCloud):
+                agent.run("something complex", intent_class="complex_reasoning")
+
+
+# ── finalize planning-text rejection ─────────────────────────────────────────
+
+def _finalize_tool_response(answer: str, call_id: str = "call_fin") -> MagicMock:
+    """Simulate model calling finalize(answer=...) as a tool call."""
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {"choices": [{"finish_reason": "tool_calls", "message": {
+        "content": None,
+        "tool_calls": [{"id": call_id, "function": {
+            "name": "finalize",
+            "arguments": json.dumps({"answer": answer})
+        }}]
+    }}]}
+    return resp
+
+
+def test_finalize_with_planning_text_is_rejected_and_nudged(agent):
+    """finalize() called with planning text must be nudged, not returned as the answer."""
+    calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        calls.append(json or {})
+        if len(calls) == 1:
+            return _finalize_tool_response("Let me get the specific previous match scores for you.")
+        return _finalize_tool_response("Brazil beat Germany 2-0 in the 2002 World Cup final.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            result = agent.run("what was the score in the 2002 World Cup final?")
+
+    assert "Let me" not in result["speak"], "planning text must not be returned as final answer"
+    assert "Brazil" in result["speak"] or "2-0" in result["speak"]
+    assert len(calls) >= 2, "Expected a retry after planning-text finalize rejection"
+
+    # Second call must contain a nudge about the planning text
+    nudge_msg = next(
+        (m for m in calls[1].get("messages", [])
+         if m.get("role") == "user" and "planning text" in (m.get("content") or "").lower()),
+        None
+    )
+    assert nudge_msg is not None, "A nudge message must be injected after planning-text finalize"
+
+
+def test_finalize_planning_text_limit_two_nudges(agent):
+    """After 2 nudges, planning-text finalize is accepted as-is to avoid infinite loop."""
+    calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        calls.append(json or {})
+        return _finalize_tool_response("Let me look into that for you.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            result = agent.run("what happened?")
+
+    # After 2 nudges the 3rd finalize should be accepted despite planning text
+    assert result is not None
+    assert len(calls) == 3, f"Expected exactly 3 calls (2 nudges + 1 accepted), got {len(calls)}"

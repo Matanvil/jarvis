@@ -4,6 +4,8 @@ import SwiftUI
 /// Energetic variant: fast-spinning rings, vivid blue glow, pulsing core.
 struct ArcReactorView: View {
 
+    var size: CGFloat = 72
+
     // Ring rotations — each animates independently on appear
     @State private var ring2Rotation: Double = 0
     @State private var ring3Rotation: Double = 0
@@ -11,8 +13,6 @@ struct ArcReactorView: View {
     @State private var arcAngle: Double = 0
     @State private var coreBright: Bool = false
     @State private var glowLarge: Bool = false
-
-    private let size: CGFloat = 72
     private let blue = Color(red: 0.22, green: 0.74, blue: 0.97)
     private let lightBlue = Color(red: 0.49, green: 0.83, blue: 0.99)
 

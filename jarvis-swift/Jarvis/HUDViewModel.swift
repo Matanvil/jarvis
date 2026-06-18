@@ -13,6 +13,11 @@ enum HUDState: Equatable {
     case minimized
 }
 
+enum WindowMode: Equatable {
+    case hud
+    case fullDesktop
+}
+
 class HUDViewModel: ObservableObject {
     static let shared = HUDViewModel()
 
@@ -28,6 +33,8 @@ class HUDViewModel: ObservableObject {
 
     /// Set to true to focus the text input field. Resets itself to false after focus is applied (one-shot).
     @Published var focusTextInput: Bool = false
+
+    @Published var windowMode: WindowMode = .hud
 
     /// Accumulates streaming tokens for live display. Cleared when the turn finalizes.
     @Published var streamingBuffer: String = ""
@@ -102,5 +109,13 @@ class HUDViewModel: ObservableObject {
     /// Synchronous save — called from applicationWillTerminate.
     func saveSessionSync() {
         ConversationStore.save(turns: turns, sessionStart: sessionStart)
+    }
+
+    func expandToFullDesktop() {
+        windowMode = .fullDesktop
+    }
+
+    func collapseToHUD() {
+        windowMode = .hud
     }
 }

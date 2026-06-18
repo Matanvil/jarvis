@@ -16,6 +16,7 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     // MARK: - Dependencies (injected)
     private let client: JarvisClient
     private let viewModel: HUDViewModel
+    private let fullDesktopViewModel: FullDesktopViewModel
     private let showHUD: (HUDState) -> Void   // calls AppDelegate.showHUD (updates state + orderFront)
     private let hideHUD: () -> Void           // calls AppDelegate.hideHUD (sets .hidden + orderOut)
 
@@ -50,11 +51,13 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     init(
         client: JarvisClient,
         viewModel: HUDViewModel,
+        fullDesktopViewModel: FullDesktopViewModel,
         showHUD: @escaping (HUDState) -> Void,
         hideHUD: @escaping () -> Void
     ) {
         self.client = client
         self.viewModel = viewModel
+        self.fullDesktopViewModel = fullDesktopViewModel
         self.showHUD = showHUD
         self.hideHUD = hideHUD
         super.init()
@@ -63,6 +66,14 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     }
 
     // MARK: - Lifecycle
+
+    func triggerVoiceInput() {
+        if isListening {
+            stopAndSend()
+        } else {
+            requestAuthAndListen()
+        }
+    }
 
     func start() {
         NSLog("[Jarvis] AudioController.start() — registering flagsChanged monitor")
@@ -417,13 +428,32 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             if stepVoice, milestone {
                 speak(label)
             }
+            let toolName = event["tool"] as? String ?? label
+            fullDesktopViewModel.recordToolUsed(toolName)
         case "clear":
+            // Flush remaining queue so we capture the full draft before wiping.
+            viewModel.drainTokenQueue(chars: viewModel.tokenQueue.count)
+            let draft = viewModel.streamingBuffer
+            let lines = draft.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            let meaningful = lines.first(where: { !$0.lowercased().hasPrefix("actions") })
+            if let line = meaningful {
+                let label = "↩ " + String(line.prefix(70))
+                viewModel.appendStep(Step(tool: label, inputSummary: nil, milestone: false))
+            } else if !lines.isEmpty {
+                viewModel.appendStep(Step(tool: "↩ Reconsidered approach", inputSummary: nil, milestone: false))
+            }
             stopStreamTimer()
             viewModel.clearStreamingBuffer()
             showHUD(.executing(step: "Working…"))
         case "token":
             let token = event["text"] as? String ?? ""
             if !token.isEmpty {
+                // Discard tokens that arrive after the current turn is already finalized.
+                // This prevents stray post-complete tokens from restarting the stream timer
+                // and filling streamingBuffer with leftover content (e.g. markdown table pipes).
+                guard viewModel.turns.last?.response == nil else { break }
                 viewModel.appendToken(token)
                 startStreamTimerIfNeeded()
             }
@@ -458,6 +488,19 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     }
 
     private func finalizeComplete(event: [String: Any]) {
+        let tokS        = event["tok_s"] as? Double ?? 0
+        let ttftMs      = event["ttft_ms"] as? Int ?? 0
+        let model       = event["_model"] as? String ?? ""
+        let intentClass = event["_intent_class"] as? String ?? ""
+        // "tokens" is the key set by OllamaAgent; "gen_tokens" is the analytics alias
+        let genTokens   = event["tokens"] as? Int ?? event["gen_tokens"] as? Int ?? 0
+        fullDesktopViewModel.updateMetrics(
+            tokS: tokS,
+            ttftMs: ttftMs,
+            model: model,
+            intentClass: intentClass,
+            genTokens: genTokens
+        )
         if let data = try? JSONSerialization.data(withJSONObject: event),
            let response = try? JSONDecoder().decode(CommandResponse.self, from: data) {
             viewModel.finalizeTurn(response: response.text)

@@ -12,23 +12,32 @@
 		38949C6A1B97F9254C8BF611 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DA8E26A20181D485520F5D /* SettingsView.swift */; };
 		4C532BB72DB8492A9CA01EFA /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFDE0C2B9C763CB14D4860EF /* MenuBarController.swift */; };
 		50B5984098E2CA321B052F50 /* ArcReactorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2A2306408B895EC1588A19 /* ArcReactorView.swift */; };
+		52CD26A97C1679CD719FC579 /* FullDesktopViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D37F26EB8968E1B3CCD7EE /* FullDesktopViewModel.swift */; };
 		5B192FF0418EF35BCAB45133 /* SettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16DE1934410CC3348DF27C92 /* SettingsViewModel.swift */; };
+		5D4470E7C0E89C71F950984B /* FullDesktopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35818D7346CB5DC73E9B2ECF /* FullDesktopView.swift */; };
 		5E25349CC3262A18DE554A01 /* JarvisApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD65447B9E4C38A85B4132FD /* JarvisApp.swift */; };
 		67C0FA63859E57CDAD3386B0 /* HUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 827BD974D1EDA53447ABD677 /* HUDView.swift */; };
 		73EB57CE388694AD14C8846D /* ConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28050F6CD9B2DCFF2B910307 /* ConversationStore.swift */; };
+		776017168725B458E4CF9304 /* SystemMetricsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1624664F3060FF2E5A666069 /* SystemMetricsProvider.swift */; };
 		80196255C1F1E1FAD02CF1B6 /* HUDWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54CCBC142B08F40AAF2803FF /* HUDWindow.swift */; };
 		9A4605C19C8DED53DB7CFDA9 /* JarvisClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1782D973C548CA02194D931A /* JarvisClient.swift */; };
 		9DC43759D0969F2E2310C9B0 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF188A9690C132DC1EAA28DE /* AppDelegate.swift */; };
+		B68ECD2A7B7544047935F803 /* FullDesktopWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14AE399062A7C8368452D8BB /* FullDesktopWindow.swift */; };
 		C5A0B5A7794EDAD1DAD54D45 /* AudioController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE46948996AFC7C505BF9F2D /* AudioController.swift */; };
+		DEBFA12BB1A100389711262E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 61C76376F114B708AF2B9EF1 /* Assets.xcassets */; };
 		F661D252F7E4C5019639C9E1 /* HUDViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14F409752942B73285CEBFE /* HUDViewModel.swift */; };
 		F7BADDC6504BE5C8CBDC71C7 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8280E667A550625C6F5B52C /* SettingsWindowController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		14AE399062A7C8368452D8BB /* FullDesktopWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullDesktopWindow.swift; sourceTree = "<group>"; };
+		1624664F3060FF2E5A666069 /* SystemMetricsProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemMetricsProvider.swift; sourceTree = "<group>"; };
 		16DE1934410CC3348DF27C92 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		1782D973C548CA02194D931A /* JarvisClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisClient.swift; sourceTree = "<group>"; };
 		28050F6CD9B2DCFF2B910307 /* ConversationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationStore.swift; sourceTree = "<group>"; };
+		35818D7346CB5DC73E9B2ECF /* FullDesktopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullDesktopView.swift; sourceTree = "<group>"; };
 		54CCBC142B08F40AAF2803FF /* HUDWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDWindow.swift; sourceTree = "<group>"; };
+		61C76376F114B708AF2B9EF1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		827BD974D1EDA53447ABD677 /* HUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDView.swift; sourceTree = "<group>"; };
 		A1DA8E26A20181D485520F5D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		AF2A2306408B895EC1588A19 /* ArcReactorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArcReactorView.swift; sourceTree = "<group>"; };
@@ -38,6 +47,7 @@
 		BD65447B9E4C38A85B4132FD /* JarvisApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JarvisApp.swift; sourceTree = "<group>"; };
 		C8280E667A550625C6F5B52C /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		CF188A9690C132DC1EAA28DE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		D4D37F26EB8968E1B3CCD7EE /* FullDesktopViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullDesktopViewModel.swift; sourceTree = "<group>"; };
 		D722C25A1AB2A313C61C2A2F /* ConversationTurn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationTurn.swift; sourceTree = "<group>"; };
 		D758DDA5F42A49B6CB275DED /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F2EA89B09E63D9954B6EA5A4 /* Jarvis.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Jarvis.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -67,9 +77,13 @@
 			children = (
 				CF188A9690C132DC1EAA28DE /* AppDelegate.swift */,
 				AF2A2306408B895EC1588A19 /* ArcReactorView.swift */,
+				61C76376F114B708AF2B9EF1 /* Assets.xcassets */,
 				FE46948996AFC7C505BF9F2D /* AudioController.swift */,
 				28050F6CD9B2DCFF2B910307 /* ConversationStore.swift */,
 				D722C25A1AB2A313C61C2A2F /* ConversationTurn.swift */,
+				35818D7346CB5DC73E9B2ECF /* FullDesktopView.swift */,
+				D4D37F26EB8968E1B3CCD7EE /* FullDesktopViewModel.swift */,
+				14AE399062A7C8368452D8BB /* FullDesktopWindow.swift */,
 				827BD974D1EDA53447ABD677 /* HUDView.swift */,
 				B14F409752942B73285CEBFE /* HUDViewModel.swift */,
 				54CCBC142B08F40AAF2803FF /* HUDWindow.swift */,
@@ -82,6 +96,7 @@
 				A1DA8E26A20181D485520F5D /* SettingsView.swift */,
 				16DE1934410CC3348DF27C92 /* SettingsViewModel.swift */,
 				C8280E667A550625C6F5B52C /* SettingsWindowController.swift */,
+				1624664F3060FF2E5A666069 /* SystemMetricsProvider.swift */,
 			);
 			path = Jarvis;
 			sourceTree = "<group>";
@@ -94,6 +109,7 @@
 			buildConfigurationList = B6D5E915E8E9BDF0BF748745 /* Build configuration list for PBXNativeTarget "Jarvis" */;
 			buildPhases = (
 				E0992BE4761F337F2AC5BF62 /* Sources */,
+				C593366D9BBD0DC5F45EA023 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -140,6 +156,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		C593366D9BBD0DC5F45EA023 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DEBFA12BB1A100389711262E /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		E0992BE4761F337F2AC5BF62 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -150,6 +177,9 @@
 				C5A0B5A7794EDAD1DAD54D45 /* AudioController.swift in Sources */,
 				73EB57CE388694AD14C8846D /* ConversationStore.swift in Sources */,
 				20D2689B00846AD289147615 /* ConversationTurn.swift in Sources */,
+				5D4470E7C0E89C71F950984B /* FullDesktopView.swift in Sources */,
+				52CD26A97C1679CD719FC579 /* FullDesktopViewModel.swift in Sources */,
+				B68ECD2A7B7544047935F803 /* FullDesktopWindow.swift in Sources */,
 				67C0FA63859E57CDAD3386B0 /* HUDView.swift in Sources */,
 				F661D252F7E4C5019639C9E1 /* HUDViewModel.swift in Sources */,
 				80196255C1F1E1FAD02CF1B6 /* HUDWindow.swift in Sources */,
@@ -160,6 +190,7 @@
 				38949C6A1B97F9254C8BF611 /* SettingsView.swift in Sources */,
 				5B192FF0418EF35BCAB45133 /* SettingsViewModel.swift in Sources */,
 				F7BADDC6504BE5C8CBDC71C7 /* SettingsWindowController.swift in Sources */,
+				776017168725B458E4CF9304 /* SystemMetricsProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -179,7 +210,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jarvis.app;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.9;
@@ -237,7 +268,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -262,7 +293,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jarvis.app;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.9;
@@ -314,7 +345,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

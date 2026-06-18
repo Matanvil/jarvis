@@ -13,10 +13,11 @@ private struct ThreadHeightKey: PreferenceKey {
 
 struct HUDView: View {
     @ObservedObject var viewModel: HUDViewModel
-    var onDismiss:  () -> Void = {}
-    var onMinimize: () -> Void = {}
-    var onExpand:   () -> Void = {}
-    var onApprove:  () -> Void = {}
+    var onDismiss:   () -> Void = {}
+    var onMinimize:  () -> Void = {}
+    var onActivate:  () -> Void = {}
+    var onExpand:    () -> Void = {}
+    var onApprove:   () -> Void = {}
     var onDeny:     () -> Void = {}
     var onTextCommand: (String) -> Void = { _ in }
 
@@ -42,7 +43,7 @@ struct HUDView: View {
         Group {
             if viewModel.state == .minimized {
                 ArcReactorView()
-                    .onTapGesture(perform: onExpand)
+                    .onTapGesture(perform: onActivate)
             } else if viewModel.state != .hidden {
                 ZStack(alignment: .topTrailing) {
                     VStack(spacing: 0) {
@@ -56,10 +57,19 @@ struct HUDView: View {
                             .fill(.ultraThinMaterial)
                     )
 
-                    // Hover-reveal minimize/close buttons
+                    // Hover-reveal minimize/expand/close buttons
                     HStack(spacing: 6) {
                         Button(action: onMinimize) {
                             Image(systemName: "minus.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(
+                                    Color(red: 0.22, green: 0.74, blue: 0.97).opacity(0.85)
+                                )
+                        }
+                        .buttonStyle(.plain)
+
+                        Button(action: onExpand) {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right.circle.fill")
                                 .font(.system(size: 16))
                                 .foregroundStyle(
                                     Color(red: 0.22, green: 0.74, blue: 0.97).opacity(0.85)
@@ -306,7 +316,7 @@ struct HUDView: View {
 
 // MARK: - TurnRowView
 
-private struct TurnRowView: View {
+struct TurnRowView: View {
     let turn: ConversationTurn
     var streamingText: String = ""
 

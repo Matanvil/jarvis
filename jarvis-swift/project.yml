@@ -2,7 +2,7 @@ name: Jarvis
 options:
   bundleIdPrefix: com.jarvis
   deploymentTarget:
-    macOS: "13.0"
+    macOS: "14.0"
   createIntermediateGroups: true
 
 targets:
@@ -15,14 +15,15 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jarvis.app
         SWIFT_VERSION: "5.9"
-        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_ENTITLEMENTS: Jarvis/Jarvis.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Jarvis/Info.plist
       properties:
-        LSUIElement: true
+        LSUIElement: false
         NSMicrophoneUsageDescription: "Jarvis uses the microphone for voice commands."
         NSSpeechRecognitionUsageDescription: "Jarvis uses speech recognition to transcribe your voice commands."
         NSHumanReadableCopyright: ""
