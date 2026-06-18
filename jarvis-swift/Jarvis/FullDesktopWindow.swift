@@ -10,7 +10,9 @@ final class FullDesktopWindow: NSWindow {
         onCollapse: @escaping () -> Void,
         onTextCommand: @escaping (String) -> Void,
         onVoice: @escaping () -> Void,
-        onSettings: @escaping () -> Void
+        onSettings: @escaping () -> Void,
+        onApprove: @escaping () -> Void = {},
+        onDeny: @escaping () -> Void = {}
     ) {
         let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let width  = min(screen.width * 0.9, 1440)
@@ -40,7 +42,9 @@ final class FullDesktopWindow: NSWindow {
             onCollapse: onCollapse,
             onTextCommand: onTextCommand,
             onVoice: onVoice,
-            onSettings: onSettings
+            onSettings: onSettings,
+            onApprove: onApprove,
+            onDeny: onDeny
         )
         contentView = NSHostingView(rootView: rootView)
     }
