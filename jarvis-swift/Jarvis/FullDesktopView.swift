@@ -846,6 +846,15 @@ struct DesktopInputBar: View {
                         onTextCommand(inputText)
                         inputText = ""
                     }
+                    .onChange(of: viewModel.state) { _, newState in
+                        // Re-focus after each command completes so the user can type immediately.
+                        switch newState {
+                        case .response, .approved, .denied:
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { focused = true }
+                        default: break
+                        }
+                    }
+                    .onAppear { focused = true }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(accentCyan.opacity(0.04))

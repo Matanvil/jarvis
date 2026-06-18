@@ -437,6 +437,10 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
         case "token":
             let token = event["text"] as? String ?? ""
             if !token.isEmpty {
+                // Discard tokens that arrive after the current turn is already finalized.
+                // This prevents stray post-complete tokens from restarting the stream timer
+                // and filling streamingBuffer with leftover content (e.g. markdown table pipes).
+                guard viewModel.turns.last?.response == nil else { break }
                 viewModel.appendToken(token)
                 startStreamTimerIfNeeded()
             }
