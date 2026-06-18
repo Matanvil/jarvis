@@ -4,13 +4,28 @@ import Combine
 @MainActor
 final class FullDesktopViewModel: ObservableObject {
 
-    // MARK: - Jarvis session metrics (updated by AudioController)
-    @Published var tokS: Double = 0
-    @Published var ttftMs: Int = 0
-    @Published var executorModel: String = "—"
-    @Published var intentClass: String = "—"
+    // MARK: - Last reply metrics
+    @Published var lastTokS: Double = 0
+    @Published var lastTtftMs: Int = 0
+    @Published var lastModel: String = "—"
+    @Published var lastIntentClass: String = "—"
+    @Published var lastGenTokens: Int = 0
+
+    // MARK: - Session totals
     @Published var totalTokens: Int = 0
     @Published var turnCount: Int = 0
+
+    // Running sums for averages (only turns that have valid streaming metrics)
+    private var sumTokS: Double = 0
+    private var validMetricTurns: Int = 0
+    private var sumTtftMs: Int = 0
+
+    var avgTokS: Double {
+        validMetricTurns > 0 ? sumTokS / Double(validMetricTurns) : 0
+    }
+    var avgTtftMs: Int {
+        validMetricTurns > 0 ? sumTtftMs / validMetricTurns : 0
+    }
 
     // MARK: - Active tools (tool name → used this session)
     @Published var activeTools: [String] = []   // ordered by first use
@@ -40,12 +55,18 @@ final class FullDesktopViewModel: ObservableObject {
     // MARK: - Called by AudioController
 
     func updateMetrics(tokS: Double, ttftMs: Int, model: String, intentClass: String, genTokens: Int) {
-        self.tokS = tokS
-        self.ttftMs = ttftMs
-        self.executorModel = model.isEmpty ? "—" : model
-        self.intentClass = intentClass.isEmpty ? "—" : intentClass
-        self.totalTokens += genTokens
-        self.turnCount += 1
+        lastTokS = tokS
+        lastTtftMs = ttftMs
+        lastModel = model.isEmpty ? "—" : model
+        lastIntentClass = intentClass.isEmpty ? "—" : intentClass
+        lastGenTokens = genTokens
+        totalTokens += genTokens
+        turnCount += 1
+        if tokS > 0 {
+            sumTokS += tokS
+            sumTtftMs += ttftMs
+            validMetricTurns += 1
+        }
     }
 
     func recordToolUsed(_ tool: String) {
@@ -55,12 +76,16 @@ final class FullDesktopViewModel: ObservableObject {
     }
 
     func resetSession() {
-        tokS = 0
-        ttftMs = 0
-        executorModel = "—"
-        intentClass = "—"
+        lastTokS = 0
+        lastTtftMs = 0
+        lastModel = "—"
+        lastIntentClass = "—"
+        lastGenTokens = 0
         totalTokens = 0
         turnCount = 0
+        sumTokS = 0
+        sumTtftMs = 0
+        validMetricTurns = 0
         activeTools = []
     }
 

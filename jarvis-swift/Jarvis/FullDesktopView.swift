@@ -218,13 +218,38 @@ struct ModelRoutingCard: View {
 
     var body: some View {
         DesktopCard(icon: "arrow.triangle.branch", label: "MODEL ROUTING") {
-            VStack(spacing: 6) {
-                MetricRow(label: "tok/s",    value: String(format: "%.0f", fullViewModel.tokS))
-                MetricRow(label: "ttft",     value: "\(fullViewModel.ttftMs)ms")
-                MetricRow(label: "executor", value: fullViewModel.executorModel)
-                MetricRow(label: "intent",   value: fullViewModel.intentClass)
-                MetricRow(label: "tokens",   value: "\(fullViewModel.totalTokens)")
-                MetricRow(label: "turns",    value: "\(fullViewModel.turnCount)")
+            VStack(alignment: .leading, spacing: 10) {
+                // ── Last reply ────────────────────────────────────────────
+                Text("LAST REPLY")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.35))
+                    .kerning(1)
+                VStack(spacing: 5) {
+                    MetricRow(label: "tok/s",   value: fullViewModel.lastTokS > 0
+                                                       ? String(format: "%.0f", fullViewModel.lastTokS) : "—")
+                    MetricRow(label: "ttft",    value: fullViewModel.lastTtftMs > 0
+                                                       ? "\(fullViewModel.lastTtftMs)ms" : "—")
+                    MetricRow(label: "tokens",  value: fullViewModel.lastGenTokens > 0
+                                                       ? "\(fullViewModel.lastGenTokens)" : "—")
+                    MetricRow(label: "model",   value: fullViewModel.lastModel)
+                    MetricRow(label: "intent",  value: fullViewModel.lastIntentClass)
+                }
+
+                Divider().background(Color.white.opacity(0.08))
+
+                // ── Session ───────────────────────────────────────────────
+                Text("SESSION")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.35))
+                    .kerning(1)
+                VStack(spacing: 5) {
+                    MetricRow(label: "turns",     value: "\(fullViewModel.turnCount)")
+                    MetricRow(label: "tokens",    value: "\(fullViewModel.totalTokens)")
+                    MetricRow(label: "avg tok/s", value: fullViewModel.avgTokS > 0
+                                                         ? String(format: "%.0f", fullViewModel.avgTokS) : "—")
+                    MetricRow(label: "avg ttft",  value: fullViewModel.avgTtftMs > 0
+                                                         ? "\(fullViewModel.avgTtftMs)ms" : "—")
+                }
             }
             .padding(12)
         }
@@ -664,9 +689,11 @@ struct OrbZoneView: View {
                 }
 
                 HStack(spacing: 24) {
-                    statPill(value: String(format: "%.0f", fullViewModel.tokS), label: "TOK/S")
-                    statPill(value: "\(fullViewModel.ttftMs)ms", label: "TTFT")
-                    statPill(value: fullViewModel.executorModel, label: "MODEL")
+                    statPill(value: fullViewModel.lastTokS > 0
+                                   ? String(format: "%.0f", fullViewModel.lastTokS) : "—", label: "TOK/S")
+                    statPill(value: fullViewModel.lastTtftMs > 0
+                                   ? "\(fullViewModel.lastTtftMs)ms" : "—", label: "TTFT")
+                    statPill(value: fullViewModel.lastModel, label: "MODEL")
                 }
 
                 Text("SYSTEM STABILITY — \(stabilityLabel)")
@@ -854,9 +881,10 @@ struct ConversationZoneView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(viewModel.turns) { turn in
                         TurnRowView(turn: turn, streamingText: viewModel.streamingBuffer)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .id(turn.id)
                     }
                     // Sentinel: visible ↔ at bottom; drives isAtBottom state.
