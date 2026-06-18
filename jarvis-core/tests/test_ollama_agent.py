@@ -931,6 +931,54 @@ def test_planning_text_after_tool_calls_triggers_nudge(agent):
     assert "PR #39" in result["speak"]
 
 
+# ── action trace detection ───────────────────────────────────────────────────
+
+def test_action_trace_response_triggers_nudge_and_retry(agent):
+    """Model returning 'Actions: ...' text must be nudged to call finalize() instead."""
+    action_trace = (
+        "Actions:\n"
+        "- shell_run({'command': 'date'}) → exit_code=0\nstdout=Wednesday\n\nResult: Today is Wednesday."
+    )
+    responses = [
+        _stop_response(action_trace),
+        _stop_response("Today is Wednesday, June 18th."),
+    ]
+    idx = [0]
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=lambda url, json=None, **kw: (idx.__setitem__(0, idx[0]+1) or responses[idx[0]-1])):
+            result = agent.run("what day is it today?")
+    assert "Wednesday" in result["speak"]
+    assert not result["speak"].startswith("Actions:"), "action trace must not leak into final answer"
+
+
+def test_action_trace_does_not_enter_history_as_valid_answer(agent):
+    """The 'Actions:' response should be appended to messages as assistant content
+    (for context) but the next user message should be a nudge, not a finalize return."""
+    action_trace = "Actions:\n- shell_run({'command': 'date'}) → exit_code=0\nstdout=Mon\n\nResult: Monday."
+    calls = []
+    def fake_post(url, json=None, **kw):
+        calls.append(json)
+        if len(calls) == 1:
+            return _stop_response(action_trace)
+        return _stop_response("It's Monday.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            result = agent.run("what day is it?")
+
+    # Second call's messages should contain a nudge about the Actions: format
+    assert len(calls) >= 2
+    messages_in_second_call = calls[1].get("messages", [])
+    user_nudge = next(
+        (m for m in messages_in_second_call if m["role"] == "user" and "finalize" in m["content"].lower()),
+        None
+    )
+    assert user_nudge is not None, "nudge message about finalize() must be sent after action trace"
+    assert "It's Monday" in result["speak"]
+
+
 # ── enable_thinking retry ─────────────────────────────────────────────────────
 
 def _empty_length_response() -> MagicMock:

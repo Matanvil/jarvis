@@ -33,6 +33,17 @@ def _is_planning_text(text: str) -> bool:
     return bool(_PLANNING_RE.match(first_line))
 
 
+_ACTION_TRACE_RE = re.compile(r'^actions\s*:', re.IGNORECASE)
+
+
+def _is_action_trace(text: str) -> bool:
+    """Return True if the model echoed tool results as 'Actions: ...' text instead
+    of calling finalize(). This leaks implementation details into the response and
+    poisons conversational history — trigger a nudge to call finalize properly."""
+    first_line = text.strip().split("\n")[0].strip()
+    return bool(_ACTION_TRACE_RE.match(first_line))
+
+
 # Appended to the base system prompt for local models that need extra guidance
 _OLLAMA_EXTRA = """
 CRITICAL RULES FOR THIS MODEL:
@@ -46,6 +57,7 @@ CRITICAL RULES FOR THIS MODEL:
 - You have a limited number of tool calls. Use only what is needed — typically 1-3 calls. Do not explore tangents.
 - CODING TOOLS RULE: After calling coding_ask, coding_plan, or coding_review — call finalize IMMEDIATELY. These tools return complete answers. Do NOT call shell_run, file_read, list_dir, find_files, or any other tool after them. One coding tool call → finalize. That is the entire sequence.
 - NEVER call mkdir, file_write, or any filesystem-modifying command unless the user explicitly asked you to create or write something. Answering a question does not require creating directories or files.
+- NEVER write "Actions:" or echo tool call results as text in your response. After using a tool, call finalize() with a clean answer — do not describe what you did.
 """
 
 
@@ -473,15 +485,14 @@ class OllamaAgent:
                             continue
                         raise EscalateToCloud("Empty response from local executor — server may have crashed")
 
-                    # Genuine final answer: text is not planning-intent. Return now.
-                    if not _is_planning_text(text):
+                    # Genuine final answer: text is not planning-intent or an action trace. Return now.
+                    if not _is_planning_text(text) and not _is_action_trace(text):
                         result = format_response(text, state.tool_calls_made)
                         result["steps"] = state.steps
                         result.update(state.gen_metrics)
                         return result
 
-                    # Planning text returned — model wants to continue but didn't call a tool.
-                    # Nudge regardless of whether previous tool calls were made.
+                    # Planning text or action trace returned — nudge.
                     if state.no_tool_retries < 2:
                         state.no_tool_retries += 1
                         state.steps_used -= 1  # don't burn a step on the nudge
@@ -491,7 +502,13 @@ class OllamaAgent:
                         # If thinking was on and produced nothing, disable it for the retry
                         if not text and thinking_on:
                             state.thinking_disabled = True
-                        if not text:
+                        if _is_action_trace(text):
+                            nudge = (
+                                "Your response echoes tool output as 'Actions: ...' text. "
+                                "Do NOT write tool call results in your response. "
+                                "Call finalize() now with a clean, direct answer to the user's question."
+                            )
+                        elif not text:
                             nudge = (
                                 "You returned an empty response. Based on the tool results so far, "
                                 "either call the next tool to continue, or call finalize() with your answer."
