@@ -473,9 +473,10 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
     private func finalizeComplete(event: [String: Any]) {
         let tokS        = event["tok_s"] as? Double ?? 0
         let ttftMs      = event["ttft_ms"] as? Int ?? 0
-        let model       = event["model"] as? String ?? ""
-        let intentClass = event["intent_class"] as? String ?? ""
-        let genTokens   = event["gen_tokens"] as? Int ?? 0
+        let model       = event["_model"] as? String ?? ""
+        let intentClass = event["_intent_class"] as? String ?? ""
+        // "tokens" is the key set by OllamaAgent; "gen_tokens" is the analytics alias
+        let genTokens   = event["tokens"] as? Int ?? event["gen_tokens"] as? Int ?? 0
         fullDesktopViewModel.updateMetrics(
             tokS: tokS,
             ttftMs: ttftMs,
