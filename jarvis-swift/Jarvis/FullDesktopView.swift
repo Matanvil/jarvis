@@ -800,6 +800,8 @@ struct DesktopInputBar: View {
     @ObservedObject var viewModel: HUDViewModel
     var onTextCommand: (String) -> Void
     var onVoice: () -> Void
+    var onApprove: () -> Void = {}
+    var onDeny: () -> Void = {}
 
     @State private var inputText = ""
     @FocusState private var focused: Bool
@@ -812,74 +814,114 @@ struct DesktopInputBar: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            // Placeholder action chips — not wired, coming soon
-            HStack(spacing: 6) {
-                ForEach(actionChips, id: \.self) { chip in
-                    Text(chip)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(textDim)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .overlay(Capsule().stroke(cardBorder, lineWidth: 1))
-                }
-                .opacity(0.4)
-                Spacer()
-            }
-
-            HStack(spacing: 8) {
-                Button(action: onVoice) {
-                    Image(systemName: "mic.circle.fill")
-                        .font(.system(size: 28))
-                        .foregroundColor(accentCyan)
-                }
-                .buttonStyle(.plain)
-
-                TextField("Ask Jarvis anything…", text: $inputText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundColor(.white)
-                    .focused($focused)
-                    .disabled(isDisabled)
-                    .onSubmit {
-                        guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                        onTextCommand(inputText)
-                        inputText = ""
-                    }
-                    .onChange(of: viewModel.state) { _, newState in
-                        // Re-focus after each command completes so the user can type immediately.
-                        switch newState {
-                        case .response, .approved, .denied:
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { focused = true }
-                        default: break
-                        }
-                    }
-                    .onAppear { focused = true }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(accentCyan.opacity(0.04))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(cardBorder, lineWidth: 1))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                Button {
-                    guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                    onTextCommand(inputText)
-                    inputText = ""
-                } label: {
-                    Image(systemName: "paperplane.fill")
+        Group {
+            if case .approval(let description) = viewModel.state {
+                // Approval banner — replaces normal input when waiting for user confirmation
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
                         .font(.system(size: 14))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Approval Required")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.orange)
+                        Text(description)
+                            .font(.system(size: 12))
+                            .foregroundColor(.white.opacity(0.85))
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    Button("Deny", action: onDeny)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white)
-                        .padding(10)
-                        .background(accentCyan)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .shadow(color: accentCyan.opacity(0.4), radius: 8)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Color.red.opacity(0.7))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                    Button("Allow", action: onApprove)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Color.green.opacity(0.85))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
                 }
-                .buttonStyle(.plain)
+                .padding(14)
+                .background(bgSurface)
+                .overlay(Rectangle().frame(height: 1).foregroundColor(cardBorder), alignment: .top)
+            } else {
+                VStack(spacing: 8) {
+                    // Placeholder action chips — not wired, coming soon
+                    HStack(spacing: 6) {
+                        ForEach(actionChips, id: \.self) { chip in
+                            Text(chip)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(textDim)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .overlay(Capsule().stroke(cardBorder, lineWidth: 1))
+                        }
+                        .opacity(0.4)
+                        Spacer()
+                    }
+
+                    HStack(spacing: 8) {
+                        Button(action: onVoice) {
+                            Image(systemName: "mic.circle.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(accentCyan)
+                        }
+                        .buttonStyle(.plain)
+
+                        TextField("Ask Jarvis anything…", text: $inputText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13))
+                            .foregroundColor(.white)
+                            .focused($focused)
+                            .disabled(isDisabled)
+                            .onSubmit {
+                                guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                                onTextCommand(inputText)
+                                inputText = ""
+                            }
+                            .onChange(of: viewModel.state) { _, newState in
+                                // Re-focus after each command completes so the user can type immediately.
+                                switch newState {
+                                case .response, .approved, .denied:
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { focused = true }
+                                default: break
+                                }
+                            }
+                            .onAppear { focused = true }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(accentCyan.opacity(0.04))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(cardBorder, lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                        Button {
+                            guard !inputText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                            onTextCommand(inputText)
+                            inputText = ""
+                        } label: {
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(.white)
+                                .padding(10)
+                                .background(accentCyan)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .shadow(color: accentCyan.opacity(0.4), radius: 8)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(14)
+                .background(bgSurface)
+                .overlay(Rectangle().frame(height: 1).foregroundColor(cardBorder), alignment: .top)
             }
         }
-        .padding(14)
-        .background(bgSurface)
-        .overlay(Rectangle().frame(height: 1).foregroundColor(cardBorder), alignment: .top)
     }
 }
 
@@ -925,6 +967,8 @@ struct CenterColumn: View {
     var onCollapse: () -> Void
     var onTextCommand: (String) -> Void
     var onVoice: () -> Void
+    var onApprove: () -> Void = {}
+    var onDeny: () -> Void = {}
 
     private var hasConversation: Bool { !viewModel.turns.isEmpty }
 
@@ -952,7 +996,9 @@ struct CenterColumn: View {
             DesktopInputBar(
                 viewModel: viewModel,
                 onTextCommand: onTextCommand,
-                onVoice: onVoice
+                onVoice: onVoice,
+                onApprove: onApprove,
+                onDeny: onDeny
             )
         }
         .background(bgPrimary)
@@ -1026,6 +1072,8 @@ struct FullDesktopView: View {
     var onTextCommand: (String) -> Void = { _ in }
     var onVoice: () -> Void = {}
     var onSettings: () -> Void = {}
+    var onApprove: () -> Void = {}
+    var onDeny: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1045,7 +1093,9 @@ struct FullDesktopView: View {
                     fullViewModel: fullViewModel,
                     onCollapse: onCollapse,
                     onTextCommand: onTextCommand,
-                    onVoice: onVoice
+                    onVoice: onVoice,
+                    onApprove: onApprove,
+                    onDeny: onDeny
                 )
 
                 Divider().background(cardBorder)

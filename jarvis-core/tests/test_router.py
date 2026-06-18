@@ -638,3 +638,85 @@ def test_git_context_skipped_for_read_only_intent(prefix_router):
     with patch("router.get_git_context", return_value=ctx) as mock_gc:
         prefix_router.process("what time is it", cwd="/repo")
     mock_gc.assert_not_called()
+
+
+# ── destructive intent approval gate ─────────────────────────────────────────
+
+def test_destructive_intent_returns_approval_required(haiku_router, mock_haiku_agent):
+    """A destructive command must pause and return approval_required before running."""
+    haiku_router._classify = MagicMock(return_value={
+        "can_handle_locally": True, "intent_class": "destructive", "reason": "deletes files"
+    })
+    result = haiku_router.process("delete all temp files", command_id="cmd-1")
+    assert "approval_required" in result
+    assert result["approval_required"]["category"] == "destructive_command"
+    mock_haiku_agent.run.assert_not_called()
+
+
+def test_destructive_intent_registers_resume_in_approval_store(haiku_router):
+    """Paused destructive command must be registered so resume() can continue it."""
+    import approval_store
+    approval_store.clear()
+    haiku_router._classify = MagicMock(return_value={
+        "can_handle_locally": True, "intent_class": "destructive", "reason": "rm -rf"
+    })
+    haiku_router.process("wipe the build directory", command_id="cmd-2")
+    assert approval_store.has("cmd-2")
+
+
+def test_destructive_intent_resume_runs_agent(haiku_router, mock_haiku_agent):
+    """After approval, resume() must run the agent and return an annotated result."""
+    import approval_store
+    approval_store.clear()
+    mock_haiku_agent.run.return_value = {"speak": "Done.", "display": "Done.", "steps": []}
+    haiku_router._classify = MagicMock(return_value={
+        "can_handle_locally": True, "intent_class": "destructive", "reason": "deletes"
+    })
+    haiku_router.process("remove old logs", command_id="cmd-3")
+    assert approval_store.has("cmd-3")
+
+    result = haiku_router.resume("cmd-3")
+    assert result["speak"] == "Done."
+    assert result["_intent_class"] == "destructive"
+    mock_haiku_agent.run.assert_called_once()
+    assert not approval_store.has("cmd-3")
+
+
+def test_non_destructive_intent_runs_without_gate(haiku_router, mock_haiku_agent):
+    """Non-destructive commands must not be gated — agent runs immediately."""
+    import approval_store
+    approval_store.clear()
+    haiku_router._classify = MagicMock(return_value={
+        "can_handle_locally": True, "intent_class": "prepare", "reason": "read-ish"
+    })
+    result = haiku_router.process("list all files", command_id="cmd-4")
+    assert "approval_required" not in result
+    mock_haiku_agent.run.assert_called_once()
+    assert not approval_store.has("cmd-4")
+
+
+def test_destructive_without_command_id_runs_immediately(haiku_router, mock_haiku_agent):
+    """Without a command_id there's no way to resume, so run immediately (no gate)."""
+    haiku_router._classify = MagicMock(return_value={
+        "can_handle_locally": True, "intent_class": "destructive", "reason": "deletes"
+    })
+    result = haiku_router.process("delete build artifacts")  # no command_id
+    assert "approval_required" not in result
+    mock_haiku_agent.run.assert_called_once()
+
+
+def test_destructive_gate_in_ollama_first_mode(config, mock_ollama_agent):
+    """ollama_first routing must also gate destructive commands."""
+    import approval_store
+    approval_store.clear()
+    config["ollama"]["routing_mode"] = "ollama_first"
+    guardrails = Guardrails(config)
+    r = Router(config=config, guardrails=guardrails)
+    r._ollama = mock_ollama_agent
+    r._classify = MagicMock(return_value={
+        "can_handle_locally": True, "intent_class": "destructive", "reason": "rm"
+    })
+    result = r.process("clean the repo", command_id="cmd-5")
+    assert "approval_required" in result
+    mock_ollama_agent.run.assert_not_called()
+    assert approval_store.has("cmd-5")

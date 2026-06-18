@@ -567,7 +567,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             },
             onSettings: {
                 SettingsWindowController.shared.open()
-            }
+            },
+            onApprove: { [weak self] in self?.handleApprove() },
+            onDeny:    { [weak self] in self?.handleDeny() }
         )
     }
 

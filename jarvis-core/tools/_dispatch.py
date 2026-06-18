@@ -257,12 +257,14 @@ def format_response(text: str, tool_calls_made: list) -> dict:
     If the model included a VOICE: line, use it as the spoken summary and
     strip it from the displayed text. Falls back to first-sentence heuristic.
     """
-    # Extract VOICE: tag if present (model-generated TTS summary)
+    # Extract VOICE: tag if present (model-generated TTS summary); case-insensitive
+    # so "VOICe:", "voice:", etc. are all caught.
     voice_line = None
     display_lines = []
     for line in text.splitlines():
         stripped = line.strip()
-        if stripped.startswith("VOICE:"):
+        upper = stripped.upper()
+        if upper.startswith("VOICE:"):
             voice_line = stripped[len("VOICE:"):].strip()
         else:
             display_lines.append(line)
