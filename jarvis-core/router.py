@@ -190,6 +190,33 @@ class Router:
 
         return "\n".join(lines) + "\n\n" + text
 
+    def _gate_destructive(
+        self,
+        intent_class: str,
+        command_id: str | None,
+        run_fn,           # callable(step_callback) -> result dict
+        meta: dict,       # passed to approval_store for resume annotation
+    ) -> dict | None:
+        """If intent_class is 'destructive' and no command_id approval is already
+        registered, pause execution and return an approval_required dict.
+        Returns None when the command should proceed without gating (non-destructive
+        or no command_id to resume with)."""
+        if intent_class != "destructive" or command_id is None:
+            return None
+        import approval_store
+        approval_store.register(command_id, run_fn, meta)
+        return {
+            "speak": None,
+            "display": None,
+            "steps": [],
+            "approval_required": {
+                "tool": "destructive_command",
+                "description": "This command was classified as destructive. Approve to continue.",
+                "tool_use_id": command_id,
+                "category": "destructive_command",
+            },
+        }
+
     def resume(self, command_id: str, step_callback=None) -> dict | None:
         """Continue a run paused for approval. Returns the annotated final result,
         or None if there is no paused run for this command_id (caller falls back to
@@ -241,6 +268,20 @@ class Router:
                           self._config.get("models", {}).get("haiku", "claude-haiku-4-5-20251001"))
 
             user_text = self._build_user_prefix(text, cwd, memory_context, intent_class, source)
+
+            gate = self._gate_destructive(
+                intent_class, command_id,
+                lambda sc, _a=agent, _ut=user_text, _mn=model_name: (
+                    _a.run(user_text=_ut, cwd=cwd, history=self._history, source=source,
+                           step_callback=sc, command_id=command_id,
+                           system_prompt=self._get_system_prompt(cwd))
+                ),
+                {"user_text": text, "agent": "claude", "model": model_name,
+                 "intent_class": intent_class, "escalation_reason": classification.get("reason")},
+            )
+            if gate is not None:
+                return gate
+
             result = agent.run(user_text=user_text, cwd=cwd, history=self._history, source=source,
                                step_callback=step_callback, command_id=command_id,
                                system_prompt=self._get_system_prompt(cwd))
@@ -273,6 +314,20 @@ class Router:
                 return self._annotate(result, agent="claude", model=model_name,
                                       escalated=False, escalation_reason=classification.get("reason"),
                                       intent_class=intent_class, start=start)
+
+            gate = self._gate_destructive(
+                intent_class, command_id,
+                lambda sc, _ut=user_text: self._ollama.run(
+                    user_text=_ut, cwd=cwd, history=self._history,
+                    step_callback=sc, intent_class=intent_class, command_id=command_id,
+                    system_prompt=self._get_local_system_prompt(cwd),
+                ),
+                {"user_text": text, "agent": "ollama",
+                 "model": self._config.get("ollama", {}).get("executor_model") or self._ollama_model,
+                 "intent_class": intent_class},
+            )
+            if gate is not None:
+                return gate
 
             # Non-complex: use local OllamaAgent; escalate to Sonnet on failure
             try:
@@ -324,6 +379,19 @@ class Router:
         intent_class = classification.get("intent_class", "read_only")
         can_handle_locally = classification.get("can_handle_locally", True)
         user_text = self._build_user_prefix(text, cwd, memory_context, intent_class, source)
+
+        gate = self._gate_destructive(
+            intent_class, command_id,
+            lambda sc, _ut=user_text: self._ollama.run(
+                user_text=_ut, cwd=cwd, history=self._history,
+                step_callback=sc, intent_class=intent_class, command_id=command_id,
+                system_prompt=self._get_local_system_prompt(cwd),
+            ),
+            {"user_text": text, "agent": "ollama", "model": self._ollama_model,
+             "intent_class": intent_class},
+        )
+        if gate is not None:
+            return gate
 
         escalation_reason = None
         if mode == "ollama_only" or can_handle_locally:
