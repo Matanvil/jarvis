@@ -431,6 +431,19 @@ final class AudioController: NSObject, SFSpeechRecognizerDelegate {
             let toolName = event["tool"] as? String ?? label
             fullDesktopViewModel.recordToolUsed(toolName)
         case "clear":
+            // Flush remaining queue so we capture the full draft before wiping.
+            viewModel.drainTokenQueue(chars: viewModel.tokenQueue.count)
+            let draft = viewModel.streamingBuffer
+            let lines = draft.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            let meaningful = lines.first(where: { !$0.lowercased().hasPrefix("actions") })
+            if let line = meaningful {
+                let label = "↩ " + String(line.prefix(70))
+                viewModel.appendStep(Step(tool: label, inputSummary: nil, milestone: false))
+            } else if !lines.isEmpty {
+                viewModel.appendStep(Step(tool: "↩ Reconsidered approach", inputSummary: nil, milestone: false))
+            }
             stopStreamTimer()
             viewModel.clearStreamingBuffer()
             showHUD(.executing(step: "Working…"))
