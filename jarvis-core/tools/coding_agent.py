@@ -26,7 +26,7 @@ _PLANS_DIR = os.path.expanduser("~/.jarvis/coding-agent-plans")
 
 class CodingAgentTool:
     def __init__(self, config: dict):
-        ollama_host = config.get("ollama", {}).get("host", "http://localhost:11434")
+        ollama_host = config.get("local", {}).get("host", "http://localhost:11434")
         claude = ClaudeClient(
             model=config.get("models", {}).get("haiku", "claude-haiku-4-5-20251001"),
             api_key=config["anthropic_api_key"],
@@ -37,7 +37,7 @@ class CodingAgentTool:
                 ollama=OllamaClient(model=local_model, base_url=ollama_host),
                 claude=claude,
             )
-            if config.get("ollama", {}).get("routing_mode") == "ollama_only":
+            if config.get("local", {}).get("routing_mode") == "local":
                 hybrid.force_local = True
             self._llm = hybrid
         else:
