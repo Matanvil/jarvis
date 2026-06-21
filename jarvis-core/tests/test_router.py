@@ -330,16 +330,18 @@ def test_local_first_uses_sonnet_for_complex_reasoning(local_first_router, mock_
     assert result["_model"] == "claude-sonnet-4-6"
 
 
-def test_local_first_escalates_to_sonnet_on_raise(local_first_router, mock_ollama_agent, mock_sonnet_agent):
+def test_local_first_stays_local_on_escalate(local_first_router, mock_ollama_agent, mock_sonnet_agent):
+    """In local_first mode, OllamaAgent failure must return a graceful message — never call cloud."""
     from ollama_agent import EscalateToCloud
     local_first_router._classify = MagicMock(return_value={
         "can_handle_locally": True, "intent_class": "read_only", "reason": "simple"
     })
-    mock_ollama_agent.run.side_effect = EscalateToCloud("too complex")
+    mock_ollama_agent.run.side_effect = EscalateToCloud("timeout")
     result = local_first_router.process("do something hard")
-    mock_sonnet_agent.run.assert_called_once()
+    mock_sonnet_agent.run.assert_not_called()
     assert result["_escalated"] is True
-    assert result["_escalation_reason"] == "too complex"
+    assert "local_first" in result["_escalation_reason"]
+    assert result["speak"] is not None
 
 
 def test_local_first_classifier_failure_falls_back_to_ollama(local_first_router, mock_ollama_agent, mock_sonnet_agent):

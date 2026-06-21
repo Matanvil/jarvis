@@ -1099,7 +1099,7 @@ def test_nudge_dpo_capture_records_rejected_response(agent, tmp_path):
     stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
     with patch.object(agent._http_client, "stream", stream_mock):
         with patch.object(agent._http_client, "post", side_effect=fake_post):
-            with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):
+            with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
                 agent.run("organize my files", command_id="test-cmd-1")
 
     assert dpo_log.exists(), "DPO log file must be created on nudge"
@@ -1130,7 +1130,7 @@ def test_nudge_dpo_capture_records_chosen_when_retry_calls_tool(agent, tmp_path)
     with patch.object(agent._http_client, "stream", stream_mock):
         with patch.object(agent._http_client, "post", side_effect=fake_post):
             with patch("ollama_agent.execute_tool", return_value="a.txt\nb.txt"):
-                with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):
+                with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
                     agent.run("list downloads", command_id="test-cmd-2")
 
     records = [json.loads(line) for line in dpo_log.read_text().splitlines()]
@@ -1153,7 +1153,7 @@ def test_nudge_dpo_no_capture_when_model_calls_tool_directly(agent, tmp_path):
     ]
     with patch("httpx.Client.post", side_effect=responses):
         with patch.object(agent._shell, "run", return_value={"exit_code": 0, "stdout": "a.txt", "stderr": ""}):
-            with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):
+            with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
                 agent.run("list downloads")
 
     assert not dpo_log.exists(), "DPO log must not be created when no nudge fires"

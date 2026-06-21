@@ -343,17 +343,12 @@ class Router:
                                       intent_class=intent_class, start=start)
             except EscalateToCloud as e:
                 logging.getLogger("jarvis.errors").warning(
-                    f"Local executor escalated to Sonnet: {e.reason}"
+                    f"Local executor could not complete task: {e.reason}"
                 )
-                result = self._sonnet.run(
-                    user_text=user_text, cwd=cwd, history=self._history,
-                    ollama_available=False, source=source, step_callback=step_callback, command_id=command_id,
-                    system_prompt=self._get_system_prompt(cwd),
-                )
-                self._append_turn(text, result)
-                model_name = self._config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
-                return self._annotate(result, agent="claude", model=model_name,
-                                      escalated=True, escalation_reason=e.reason,
+                msg = "I wasn't able to complete that locally. Please try rephrasing or break the task into smaller steps."
+                result = {"speak": msg, "display": msg, "steps": []}
+                return self._annotate(result, agent="ollama", model=self._ollama_model,
+                                      escalated=True, escalation_reason=f"suppressed:local_first:{e.reason}",
                                       intent_class=intent_class, start=start)
 
         # claude_only: skip classifier entirely
@@ -420,12 +415,17 @@ class Router:
 
         # can_handle_locally=False OR Ollama escalated: route to Claude
         # Pass ollama_available=False when escalated so Claude doesn't waste a step on delegate_to_local
-        result = self._claude.run(
-            user_text=user_text, cwd=cwd, history=self._history,
-            ollama_available=(escalation_reason is None), source=source,
-            step_callback=step_callback, command_id=command_id,
-            system_prompt=self._get_system_prompt(cwd),
-        )
+        try:
+            result = self._claude.run(
+                user_text=user_text, cwd=cwd, history=self._history,
+                ollama_available=(escalation_reason is None), source=source,
+                step_callback=step_callback, command_id=command_id,
+                system_prompt=self._get_system_prompt(cwd),
+            )
+        except _anthropic.APIStatusError as e:
+            logging.getLogger("jarvis.errors").error(f"Anthropic API error during cloud fallback: {e}")
+            msg = "Cloud fallback unavailable (API error). Please check your Anthropic API credits or try again later."
+            result = {"speak": msg, "display": msg, "steps": []}
         self._append_turn(text, result)
         return self._annotate(result, agent="claude", model="claude-sonnet-4-6",
                               escalated=escalation_reason is not None,
