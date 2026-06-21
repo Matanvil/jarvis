@@ -25,10 +25,10 @@ DEFAULTS = {
         "modify_system": "require_approval",
         "run_code_with_effects": "auto_allow",
     },
-    "ollama": {
+    "local": {
         "host": "http://localhost:11434",
         "model": "qwen3.6:35b-a3b",
-        "routing_mode": "local_first",   # local_first | haiku_first | ollama_first | claude_only | ollama_only
+        "routing_mode": "automatic",   # automatic | local | cloud
         "timeout_seconds": 300,
         "executor_host": "http://127.0.0.1:8093",
         "executor_model": "mlx-community/Qwen3.6-35B-A3B-4bit",
@@ -40,7 +40,7 @@ DEFAULTS = {
     },
     "reasoning": {
         "max_steps_claude": 15,
-        "max_steps_ollama": 15,
+        "max_steps_local": 15,
         "stall_detection": True,
     },
     "narration": {
@@ -58,6 +58,29 @@ DEFAULTS = {
     "local_model": "",
     "mcp_servers": [],
 }
+
+
+def _migrate(data: dict) -> dict:
+    """Migrate legacy config keys/values in-place."""
+    # Move "ollama" → "local"
+    if "ollama" in data and "local" not in data:
+        data["local"] = data.pop("ollama")
+    # Migrate routing mode values
+    _MODE_MAP = {
+        "local_first": "automatic",
+        "ollama_only": "local",
+        "claude_only": "cloud",
+        "ollama_first": "automatic",
+        "haiku_first": "automatic",
+    }
+    local = data.get("local", {})
+    if local.get("routing_mode") in _MODE_MAP:
+        local["routing_mode"] = _MODE_MAP[local["routing_mode"]]
+    # Rename max_steps_ollama → max_steps_local
+    r = data.get("reasoning", {})
+    if "max_steps_ollama" in r and "max_steps_local" not in r:
+        r["max_steps_local"] = r.pop("max_steps_ollama")
+    return data
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -79,9 +102,10 @@ def load() -> dict:
     else:
         with open(CONFIG_PATH) as f:
             data = json.load(f)
+        data = _migrate(data)
         cfg = {**DEFAULTS, **data}
         cfg["guardrails"] = {**DEFAULTS["guardrails"], **data.get("guardrails", {})}
-        cfg["ollama"] = {**DEFAULTS["ollama"], **data.get("ollama", {})}
+        cfg["local"] = {**DEFAULTS["local"], **data.get("local", {})}
         cfg["reasoning"] = {**DEFAULTS["reasoning"], **data.get("reasoning", {})}
         cfg["narration"] = {**DEFAULTS["narration"], **data.get("narration", {})}
         cfg["models"] = {**DEFAULTS["models"], **data.get("models", {})}
@@ -111,8 +135,8 @@ def save(cfg: dict) -> None:
 
 def executor_backend(config: dict) -> tuple[str, str]:
     """(host, model) for the local executor model. Prefers explicit executor_* keys,
-    falls back to the base ollama host/model."""
-    o = config.get("ollama", {})
+    falls back to the base local host/model."""
+    o = config.get("local", {})
     host = o.get("executor_host") or o.get("host") or "http://localhost:11434"
     model = o.get("executor_model") or o.get("model") or "mistral:latest"
     return host, model
@@ -120,7 +144,7 @@ def executor_backend(config: dict) -> tuple[str, str]:
 
 def classifier_backend(config: dict) -> tuple[str, str]:
     """(host, model) for the intent / approval classifier."""
-    o = config.get("ollama", {})
+    o = config.get("local", {})
     host = o.get("classifier_host") or o.get("host") or "http://localhost:11434"
     model = o.get("classifier_model") or o.get("model") or "mistral:latest"
     return host, model
@@ -128,7 +152,7 @@ def classifier_backend(config: dict) -> tuple[str, str]:
 
 def embedder_backend(config: dict) -> tuple[str, str]:
     """(host, model) for embeddings (coding-agent semantic index)."""
-    o = config.get("ollama", {})
+    o = config.get("local", {})
     host = o.get("embedder_host") or o.get("host") or "http://localhost:11434"
     model = o.get("embedder_model") or "nomic-embed-text"
     return host, model
