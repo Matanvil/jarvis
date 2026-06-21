@@ -14,8 +14,20 @@ from tools._dispatch import execute_tool, format_response
 from agent import TOOL_DEFINITIONS, _BASE_SYSTEM_PROMPT, _step_label
 from tools._errors import ApprovalRequiredError
 
+DPO_LOG_PATH = os.path.expanduser("~/.jarvis/logs/dpo_data.jsonl")
+
+
+def _flush_dpo(record: dict) -> None:
+    """Append a DPO record to the log file, creating it if needed."""
+    try:
+        os.makedirs(os.path.dirname(DPO_LOG_PATH), exist_ok=True)
+        with open(DPO_LOG_PATH, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
 _PLANNING_RE = re.compile(
-    r"^(now\s+|ok(ay)?,?\s+|sure,?\s+|well,?\s+|alright,?\s+|great,?\s+)?"
+    r"^(now\s+|ok(ay)?,?\s+|sure,?\s+|well,?\s+|alright,?\s+|great,?\s+|perfect[,.]?\s+)?"
     r"(let me\b|i('ll| will)\b|i'm going to\b|i need to\b|i'll start\b|"
     r"i'll check\b|i'll look\b|i'll fetch\b|i'll get\b|i'll find\b|i'll run\b|i'll read\b|"
     r"to do this\b|here's what i|first[,\s]i)",
@@ -331,6 +343,7 @@ class _OllamaLoopState:
     intent_class: str | None = None
     thinking_disabled: bool = False
     finalize_nudge_count: int = 0
+    pending_dpo: dict | None = None
 
 
 class OllamaAgent:
@@ -488,6 +501,10 @@ class OllamaAgent:
 
                     # Genuine final answer: text is not planning-intent or an action trace. Return now.
                     if not _is_planning_text(text) and not _is_action_trace(text):
+                        if state.pending_dpo is not None:
+                            state.pending_dpo["chosen"] = {"role": "assistant", "content": text}
+                            _flush_dpo(state.pending_dpo)
+                            state.pending_dpo = None
                         result = format_response(text, state.tool_calls_made)
                         result["steps"] = state.steps
                         result.update(state.gen_metrics)
@@ -498,6 +515,17 @@ class OllamaAgent:
                         state.no_tool_retries += 1
                         state.steps_used -= 1  # don't burn a step on the nudge
                         state.composing_emitted = False  # allow "Composing response…" to refire
+                        # Capture DPO record: context before bad response + rejected text.
+                        # chosen is filled in when the retry succeeds.
+                        if text and state.pending_dpo is None:
+                            state.pending_dpo = {
+                                "ts": _time.time(),
+                                "command_id": state.command_id,
+                                "intent_class": state.intent_class,
+                                "context": list(state.messages),
+                                "rejected": text,
+                                "chosen": None,
+                            }
                         if text:  # never append an empty assistant message — some backends reject it
                             state.messages.append({"role": "assistant", "content": text})
                         # If thinking was on and produced nothing, disable it for the retry
@@ -538,6 +566,10 @@ class OllamaAgent:
                     raise EscalateToCloud("Model returned text without tool calls after 2 retries")
 
                 state.messages.append(msg)
+                if state.pending_dpo is not None:
+                    state.pending_dpo["chosen"] = msg
+                    _flush_dpo(state.pending_dpo)
+                    state.pending_dpo = None
                 kind, result = self._process_tools(state, msg["tool_calls"], 0, step_callback)
                 if kind in ("final", "paused"):
                     return result

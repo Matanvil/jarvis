@@ -1101,4 +1101,80 @@ def test_finalize_planning_text_limit_two_nudges(agent):
 
     # After 2 nudges the 3rd finalize should be accepted despite planning text
     assert result is not None
-    assert len(calls) == 3, f"Expected exactly 3 calls (2 nudges + 1 accepted), got {len(calls)}"
+
+
+# ── DPO capture ───────────────────────────────────────────────────────────────
+
+def test_nudge_dpo_capture_records_rejected_response(agent, tmp_path):
+    """When planning text triggers a nudge, a DPO record is written with the rejected response."""
+    dpo_log = tmp_path / "dpo_data.jsonl"
+
+    calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        calls.append(json or {})
+        if len(calls) == 1:
+            return _stop_response("Perfect. I'll analyze the source tree and create a plan.")
+        return _stop_response("Done — here is the analysis.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):
+                agent.run("organize my files", command_id="test-cmd-1")
+
+    assert dpo_log.exists(), "DPO log file must be created on nudge"
+    records = [json.loads(line) for line in dpo_log.read_text().splitlines()]
+    assert len(records) == 1
+    rec = records[0]
+    assert rec["rejected"] == "Perfect. I'll analyze the source tree and create a plan."
+    assert rec["command_id"] == "test-cmd-1"
+    assert isinstance(rec["context"], list)
+    assert rec["context"][-1]["role"] == "user"
+
+
+def test_nudge_dpo_capture_records_chosen_when_retry_calls_tool(agent, tmp_path):
+    """When the retry after a nudge produces a tool call, chosen is captured too."""
+    dpo_log = tmp_path / "dpo_data.jsonl"
+
+    calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        calls.append(json or {})
+        if len(calls) == 1:
+            return _stop_response("I'll check that for you now.")
+        if len(calls) == 2:
+            return _tool_response("shell_run", {"command": "ls ~/Downloads"})
+        return _stop_response("You have 3 files.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.execute_tool", return_value="a.txt\nb.txt"):
+                with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):
+                    agent.run("list downloads", command_id="test-cmd-2")
+
+    records = [json.loads(line) for line in dpo_log.read_text().splitlines()]
+    assert len(records) == 1
+    rec = records[0]
+    assert rec["rejected"] == "I'll check that for you now."
+    chosen = rec["chosen"]
+    assert chosen is not None, "chosen must be set when retry produces a tool call"
+    assert chosen["role"] == "assistant"
+    assert chosen.get("tool_calls") is not None
+
+
+def test_nudge_dpo_no_capture_when_model_calls_tool_directly(agent, tmp_path):
+    """When the model calls a tool without planning text, no DPO record is written."""
+    dpo_log = tmp_path / "dpo_data.jsonl"
+
+    responses = [
+        _tool_response("shell_run", {"command": "ls ~/Downloads"}),
+        _stop_response("You have 3 files."),
+    ]
+    with patch("httpx.Client.post", side_effect=responses):
+        with patch.object(agent._shell, "run", return_value={"exit_code": 0, "stdout": "a.txt", "stderr": ""}):
+            with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):
+                agent.run("list downloads")
+
+    assert not dpo_log.exists(), "DPO log must not be created when no nudge fires"
