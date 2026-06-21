@@ -412,46 +412,25 @@ def test_near_duplicate_detection_stops_redundant_loop(agent):
 
 # ── coding agent wiring ───────────────────────────────────────────────────────
 
-def test_ollama_agent_has_coding_agent(agent):
-    """OllamaAgent should have a _coding attribute (CodingAgentTool instance)."""
-    assert hasattr(agent, "_coding")
-    assert agent._coding is not None
+def test_ollama_agent_has_no_coding_agent(agent):
+    """OllamaAgent must not expose a coding agent — coding tools are disabled."""
+    assert not hasattr(agent, "_coding")
 
 
-def test_coding_ask_tool_routes_to_coding_agent(agent):
-    """coding_ask tool call should invoke the coding agent, not return 'not available'."""
-    coding_response = _tool_response("coding_ask", {"question": "How does routing work?", "cwd": "/some/project"})
-    stop = _stop_response("Routing uses a pre-flight classifier.")
-
-    responses = [coding_response, stop]
-    call_idx = [0]
-
-    def fake_post(url, json=None, **kwargs):
-        r = responses[call_idx[0]]
-        call_idx[0] += 1
-        return r
-
-    mock_coding = MagicMock()
-    mock_coding.ask.return_value = {"answer": "Routing uses a pre-flight classifier.", "error": None}
-    agent._coding = mock_coding
-
-    with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", wraps=lambda name, args, *a, **kw: (
-            mock_coding.ask(args["question"], args["cwd"])["answer"]
-            if name == "coding_ask" else "ok"
-        )):
-            result = agent.run("How does routing work?", cwd="/some/project")
-
-    mock_coding.ask.assert_called_once()
+def test_coding_ask_not_in_tool_schema(agent):
+    """coding_ask must not be offered to the model — it's disabled."""
+    tools = agent._build_tool_list()
+    names = [t["function"]["name"] for t in tools]
+    assert "coding_ask" not in names
 
 
-def test_coding_tools_in_ollama_schema():
-    """coding_ask, coding_plan, coding_review should be in OllamaAgent's tool schema."""
+def test_coding_tools_excluded_from_ollama_schema():
+    """coding_ask, coding_plan, coding_review must not appear in OllamaAgent's tool schema."""
     from ollama_agent import _OLLAMA_TOOLS
     tool_names = [t["function"]["name"] for t in _OLLAMA_TOOLS]
-    assert "coding_ask" in tool_names
-    assert "coding_plan" in tool_names
-    assert "coding_review" in tool_names
+    assert "coding_ask" not in tool_names
+    assert "coding_plan" not in tool_names
+    assert "coding_review" not in tool_names
 
 
 def test_http_client_uses_split_timeout(agent):
@@ -657,11 +636,11 @@ def test_run_no_spurious_token_events_during_tool_call_round(agent):
     assert len(step_events) >= 1
 
 
-def test_coding_agent_passed_to_execute_tool(agent):
-    """execute_tool should be called with the coding agent instance."""
-    coding_response = _tool_response("coding_ask", {"question": "What is agent.py?", "cwd": "/p"})
-    stop = _stop_response("agent.py is the Claude agent.")
-    responses = [coding_response, stop]
+def test_coding_agent_passed_as_none_to_execute_tool(agent):
+    """execute_tool must be called with coding=None since coding tools are disabled."""
+    tool_response = _tool_response("shell_run", {"command": "echo hi"})
+    stop = _stop_response("Done.")
+    responses = [tool_response, stop]
     call_idx = [0]
 
     def fake_post(url, json=None, **kwargs):
@@ -673,13 +652,13 @@ def test_coding_agent_passed_to_execute_tool(agent):
 
     def capturing_execute_tool(name, args, shell, web, code, macos, guardrails, **kwargs):
         captured["coding"] = kwargs.get("coding")
-        return "agent.py is the Claude agent."
+        return "hi"
 
     with patch.object(agent._http_client, "post", side_effect=fake_post):
         with patch("ollama_agent.execute_tool", side_effect=capturing_execute_tool):
-            agent.run("What is agent.py?", cwd="/p")
+            agent.run("echo hi")
 
-    assert captured.get("coding") is agent._coding
+    assert captured.get("coding") is None
 
 
 # ── MCP dynamic tool injection ────────────────────────────────────────────────
@@ -1101,4 +1080,80 @@ def test_finalize_planning_text_limit_two_nudges(agent):
 
     # After 2 nudges the 3rd finalize should be accepted despite planning text
     assert result is not None
-    assert len(calls) == 3, f"Expected exactly 3 calls (2 nudges + 1 accepted), got {len(calls)}"
+
+
+# ── DPO capture ───────────────────────────────────────────────────────────────
+
+def test_nudge_dpo_capture_records_rejected_response(agent, tmp_path):
+    """When planning text triggers a nudge, a DPO record is written with the rejected response."""
+    dpo_log = tmp_path / "dpo_data.jsonl"
+
+    calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        calls.append(json or {})
+        if len(calls) == 1:
+            return _stop_response("Perfect. I'll analyze the source tree and create a plan.")
+        return _stop_response("Done — here is the analysis.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
+                agent.run("organize my files", command_id="test-cmd-1")
+
+    assert dpo_log.exists(), "DPO log file must be created on nudge"
+    records = [json.loads(line) for line in dpo_log.read_text().splitlines()]
+    assert len(records) == 1
+    rec = records[0]
+    assert rec["rejected"] == "Perfect. I'll analyze the source tree and create a plan."
+    assert rec["command_id"] == "test-cmd-1"
+    assert isinstance(rec["context"], list)
+    assert rec["context"][-1]["role"] == "user"
+
+
+def test_nudge_dpo_capture_records_chosen_when_retry_calls_tool(agent, tmp_path):
+    """When the retry after a nudge produces a tool call, chosen is captured too."""
+    dpo_log = tmp_path / "dpo_data.jsonl"
+
+    calls = []
+
+    def fake_post(url, json=None, **kwargs):
+        calls.append(json or {})
+        if len(calls) == 1:
+            return _stop_response("I'll check that for you now.")
+        if len(calls) == 2:
+            return _tool_response("shell_run", {"command": "ls ~/Downloads"})
+        return _stop_response("You have 3 files.")
+
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=fake_post):
+            with patch("ollama_agent.execute_tool", return_value="a.txt\nb.txt"):
+                with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
+                    agent.run("list downloads", command_id="test-cmd-2")
+
+    records = [json.loads(line) for line in dpo_log.read_text().splitlines()]
+    assert len(records) == 1
+    rec = records[0]
+    assert rec["rejected"] == "I'll check that for you now."
+    chosen = rec["chosen"]
+    assert chosen is not None, "chosen must be set when retry produces a tool call"
+    assert chosen["role"] == "assistant"
+    assert chosen.get("tool_calls") is not None
+
+
+def test_nudge_dpo_no_capture_when_model_calls_tool_directly(agent, tmp_path):
+    """When the model calls a tool without planning text, no DPO record is written."""
+    dpo_log = tmp_path / "dpo_data.jsonl"
+
+    responses = [
+        _tool_response("shell_run", {"command": "ls ~/Downloads"}),
+        _stop_response("You have 3 files."),
+    ]
+    with patch("httpx.Client.post", side_effect=responses):
+        with patch.object(agent._shell, "run", return_value={"exit_code": 0, "stdout": "a.txt", "stderr": ""}):
+            with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
+                agent.run("list downloads")
+
+    assert not dpo_log.exists(), "DPO log must not be created when no nudge fires"
