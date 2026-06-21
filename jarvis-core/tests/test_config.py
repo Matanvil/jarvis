@@ -203,3 +203,12 @@ def test_classifier_adapter_path_loads_from_file(tmp_path, monkeypatch):
     cfg = config.load()
     assert cfg["ollama"]["classifier_adapter_path"] == "/some/adapter"
     assert cfg["ollama"]["classifier_host"] == "http://127.0.0.1:8090"  # default preserved
+
+
+def test_dev_config_overlay_is_removed():
+    """config.load() must not read config.dev.json — ~/.jarvis/config.json is the only source."""
+    import inspect
+    import config as cfg_module
+    src = inspect.getsource(cfg_module.load)
+    assert "DEV_CONFIG_PATH" not in src
+    assert "config.dev" not in src

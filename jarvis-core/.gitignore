@@ -4,3 +4,6 @@ benchmark_*.json
 
 # Generated/external source dirs
 src/
+
+# Local dev config — may contain live API keys, never commit
+config.dev.json

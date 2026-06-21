@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".jarvis" / "config.json"
-DEV_CONFIG_PATH = Path(__file__).parent / "config.dev.json"
 
 DEFAULTS = {
     "anthropic_api_key": "",
@@ -87,11 +86,6 @@ def load() -> dict:
         cfg["narration"] = {**DEFAULTS["narration"], **data.get("narration", {})}
         cfg["models"] = {**DEFAULTS["models"], **data.get("models", {})}
         cfg["telegram"] = {**DEFAULTS["telegram"], **data.get("telegram", {})}
-
-    if DEV_CONFIG_PATH.exists():
-        with open(DEV_CONFIG_PATH) as f:
-            dev = json.load(f)
-        cfg = _deep_merge(cfg, dev)
 
     return cfg
 
