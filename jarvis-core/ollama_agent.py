@@ -27,7 +27,7 @@ def _flush_dpo(record: dict) -> None:
         pass
 
 _PLANNING_RE = re.compile(
-    r"^(now\s+|ok(ay)?,?\s+|sure,?\s+|well,?\s+|alright,?\s+|great,?\s+|perfect[,.]?\s+)?"
+    r"^(now\s+|ok(ay)?[,.]?\s+|sure[,.]?\s+|well[,.]?\s+|alright[,.]?\s+|great[,.]?\s+|perfect[,.]?\s+)?"
     r"(let me\b|i('ll| will)\b|i'm going to\b|i need to\b|i'll start\b|"
     r"i'll check\b|i'll look\b|i'll fetch\b|i'll get\b|i'll find\b|i'll run\b|i'll read\b|"
     r"to do this\b|here's what i|first[,\s]i)",
