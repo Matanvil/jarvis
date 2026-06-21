@@ -12,10 +12,10 @@ final class SettingsViewModel: ObservableObject {
     @Published var alwaysOn: Bool = false
 
     // MARK: - AI & Routing
-    @Published var routingMode: String = "haiku_first"
-    @Published var ollamaHost: String = "http://localhost:11434"
-    @Published var ollamaModel: String = "llama3.1:8b"
-    @Published var ollamaTimeout: Int = 30
+    @Published var routingMode: String = "automatic"
+    @Published var localHost: String = "http://localhost:11434"
+    @Published var localModel: String = "qwen3.6:35b-a3b"
+    @Published var localTimeout: Int = 300
 
     // MARK: - Telegram
     @Published var telegramBotToken: String = ""
@@ -40,9 +40,8 @@ final class SettingsViewModel: ObservableObject {
 
     // MARK: - Advanced
     @Published var serverPort: Int = 8765
-    @Published var maxStepsClaude: Int = 10
-    @Published var maxStepsOllama: Int = 5
-    @Published var maxTotalSteps: Int = 20
+    @Published var maxStepsClaude: Int = 15
+    @Published var maxStepsLocal: Int = 15
     @Published var stallDetection: Bool = true
     @Published var haikuModel: String = "claude-haiku-4-5-20251001"
     @Published var sonnetModel: String = "claude-sonnet-4-6"
@@ -92,12 +91,12 @@ final class SettingsViewModel: ObservableObject {
         alwaysOn  = json["always_on"]  as? Bool   ?? false
         // anthropicApiKey, braveApiKey stay blank (server redacts them)
 
-        // AI & Routing
-        if let ollama = json["ollama"] as? [String: Any] {
-            routingMode   = ollama["routing_mode"]    as? String ?? "haiku_first"
-            ollamaHost    = ollama["host"]            as? String ?? "http://localhost:11434"
-            ollamaModel   = ollama["model"]           as? String ?? "llama3.1:8b"
-            ollamaTimeout = ollama["timeout_seconds"] as? Int    ?? 30
+        // AI & Routing — config key is "local" (renamed from "ollama" in PR #47)
+        if let local = json["local"] as? [String: Any] {
+            routingMode  = local["routing_mode"]    as? String ?? "automatic"
+            localHost    = local["host"]            as? String ?? "http://localhost:11434"
+            localModel   = local["model"]           as? String ?? "qwen3.6:35b-a3b"
+            localTimeout = local["timeout_seconds"] as? Int    ?? 300
         }
 
         // Telegram — bot_token always starts blank (server redacts it)
@@ -130,9 +129,8 @@ final class SettingsViewModel: ObservableObject {
         // Advanced
         serverPort = json["server_port"] as? Int ?? 8765
         if let reasoning = json["reasoning"] as? [String: Any] {
-            maxStepsClaude = reasoning["max_steps_claude"] as? Int  ?? 10
-            maxStepsOllama = reasoning["max_steps_ollama"] as? Int  ?? 5
-            maxTotalSteps  = reasoning["max_total_steps"]  as? Int  ?? 20
+            maxStepsClaude = reasoning["max_steps_claude"] as? Int  ?? 15
+            maxStepsLocal  = reasoning["max_steps_local"]  as? Int  ?? 15
             stallDetection = reasoning["stall_detection"]  as? Bool ?? true
         }
         if let models = json["models"] as? [String: Any] {
@@ -143,11 +141,11 @@ final class SettingsViewModel: ObservableObject {
 
     private func snapshotRestartValues() {
         loadedRestartValues = [
-            "server_port":         "\(serverPort)",
-            "ollama.routing_mode": routingMode,
-            "ollama.host":         ollamaHost,
-            "models.haiku":        haikuModel,
-            "models.sonnet":       sonnetModel,
+            "server_port":        "\(serverPort)",
+            "local.routing_mode": routingMode,
+            "local.host":         localHost,
+            "models.haiku":       haikuModel,
+            "models.sonnet":      sonnetModel,
         ]
     }
 
@@ -175,11 +173,11 @@ final class SettingsViewModel: ObservableObject {
 
         // Detect if any restart-required field changed
         let currentRestartValues: [String: String] = [
-            "server_port":         "\(serverPort)",
-            "ollama.routing_mode": routingMode,
-            "ollama.host":         ollamaHost,
-            "models.haiku":        haikuModel,
-            "models.sonnet":       sonnetModel,
+            "server_port":        "\(serverPort)",
+            "local.routing_mode": routingMode,
+            "local.host":         localHost,
+            "models.haiku":       haikuModel,
+            "models.sonnet":      sonnetModel,
         ]
         needsRestart = currentRestartValues != loadedRestartValues
         snapshotRestartValues()
@@ -194,11 +192,11 @@ final class SettingsViewModel: ObservableObject {
             "wake_word":   wakeWord,
             "always_on":   alwaysOn,
             "server_port": serverPort,
-            "ollama": [
+            "local": [
                 "routing_mode":    routingMode,
-                "host":            ollamaHost,
-                "model":           ollamaModel,
-                "timeout_seconds": ollamaTimeout,
+                "host":            localHost,
+                "model":           localModel,
+                "timeout_seconds": localTimeout,
             ],
             "telegram": tg,
             "narration": [
@@ -220,8 +218,7 @@ final class SettingsViewModel: ObservableObject {
             ],
             "reasoning": [
                 "max_steps_claude": maxStepsClaude,
-                "max_steps_ollama": maxStepsOllama,
-                "max_total_steps":  maxTotalSteps,
+                "max_steps_local":  maxStepsLocal,
                 "stall_detection":  stallDetection,
             ],
             "models": [
