@@ -67,7 +67,6 @@ CRITICAL RULES FOR THIS MODEL:
 - To read a file always call file_read — NEVER use shell_run to cat/head/tail a file.
 - Be efficient: once you have enough information to answer, stop calling tools and respond. Do NOT keep gathering extra data beyond what the user asked for.
 - You have a limited number of tool calls. Use only what is needed — typically 1-3 calls. Do not explore tangents.
-- CODING TOOLS RULE: After calling coding_ask, coding_plan, or coding_review — call finalize IMMEDIATELY. These tools return complete answers. Do NOT call shell_run, file_read, list_dir, find_files, or any other tool after them. One coding tool call → finalize. That is the entire sequence.
 - NEVER call mkdir, file_write, or any filesystem-modifying command unless the user explicitly asked you to create or write something. Answering a question does not require creating directories or files.
 - NEVER write "Actions:" or echo tool call results as text in your response. After using a tool, call finalize() with a clean answer — do not describe what you did.
 """
@@ -111,7 +110,7 @@ def _anthropic_to_ollama_tools(anthropic_tools: list) -> list:
 
 # Exclude delegation tools — OllamaAgent is the delegate, not the delegator.
 # Routing decisions are made by the pre-flight classifier in Router, not by tool calls.
-_DELEGATION_TOOLS = {"delegate_to_claude_code", "delegate_to_local"}
+_DELEGATION_TOOLS = {"delegate_to_claude_code", "delegate_to_local", "coding_ask", "coding_plan", "coding_review"}
 _OLLAMA_SAFE_TOOL_DEFINITIONS = [t for t in TOOL_DEFINITIONS if t["name"] not in _DELEGATION_TOOLS]
 _FINALIZE_TOOL = {
     "type": "function",
@@ -354,8 +353,6 @@ class OllamaAgent:
         self._web = WebTool(brave_api_key=config.get("brave_api_key"))
         self._code = CodeTool()
         self._macos = MacOSTool()
-        from tools.coding_agent import CodingAgentTool
-        self._coding = CodingAgentTool(config)
         self._mcp_manager = mcp_manager
         # Shared client reuses TCP connection to the persistent Ollama process.
         # Note: if timeout is updated via POST /config after construction, the
@@ -696,7 +693,7 @@ class OllamaAgent:
             if step_callback is not None:
                 step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
             try:
-                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=self._coding, mcp_manager=self._mcp_manager)
+                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=None, mcp_manager=self._mcp_manager)
                 step["result_summary"] = result[:200] if isinstance(result, str) else str(result)[:200]
                 state.tool_calls_made.append(name)
                 state.no_tool_retries = 0  # successful tool call resets retry budget
