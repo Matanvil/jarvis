@@ -172,7 +172,7 @@ struct SettingsView: View {
     private func showRestartAlert() {
         let alert = NSAlert()
         alert.messageText = "Restart Required"
-        alert.informativeText = "Some changes (routing mode, Ollama host, or model IDs) require a server restart to take effect."
+        alert.informativeText = "Some changes (routing mode, local executor host, or model IDs) require a server restart to take effect."
         alert.addButton(withTitle: "Restart Now")
         alert.addButton(withTitle: "Later")
         let response = alert.runModal()
@@ -271,33 +271,56 @@ private struct GeneralSection: View {
 
 private struct AISection: View {
     @ObservedObject var vm: SettingsViewModel
-    private let routingModes = ["haiku_first", "ollama_first", "claude_only", "ollama_only"]
+
+    private struct ModeOption: Identifiable {
+        let id: String
+        let label: String
+        let description: String
+    }
+
+    private let routingModes: [ModeOption] = [
+        ModeOption(id: "automatic", label: "Automatic",
+                   description: "Classifier pre-flights intent. Non-complex → local model. Complex reasoning → Sonnet."),
+        ModeOption(id: "local",     label: "Local only",
+                   description: "Everything runs on the local model. No cloud API calls."),
+        ModeOption(id: "cloud",     label: "Cloud only",
+                   description: "Skip classifier, send everything directly to Sonnet."),
+    ]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeader(title: "AI & Routing")
             SettingRow("Routing mode",
-                       tooltip: "haiku_first: Ollama classifies intent, routes to Haiku or Sonnet. claude_only: always Claude, no Ollama. ollama_only: local model only, no API calls.",
+                       tooltip: "automatic: classifier routes simple tasks to the local model, complex tasks to Sonnet. local: no cloud at all. cloud: always Sonnet.",
                        restartRequired: true) {
                 Picker("", selection: $vm.routingMode) {
-                    ForEach(routingModes, id: \.self) { Text($0).tag($0) }
+                    ForEach(routingModes) { mode in
+                        Text(mode.label).tag(mode.id)
+                    }
                 }
                 .labelsHidden().frame(width: 140)
             }
-            SettingRow("Ollama host",
+            if let selected = routingModes.first(where: { $0.id == vm.routingMode }) {
+                Text(selected.description)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .padding(.bottom, 8)
+            }
+            SettingRow("Local executor host",
                        tooltip: "URL of your Ollama instance. Default is localhost. Change if running Ollama on a remote machine.",
                        restartRequired: true) {
-                TextField("http://localhost:11434", text: $vm.ollamaHost)
+                TextField("http://localhost:11434", text: $vm.localHost)
                     .textFieldStyle(.roundedBorder).frame(width: 180)
             }
-            SettingRow("Ollama model",
-                       tooltip: "Local model used for intent classification. llama3.1:8b gives the best accuracy. Must be pulled via 'ollama pull'.") {
-                TextField("llama3.1:8b", text: $vm.ollamaModel)
-                    .textFieldStyle(.roundedBorder).frame(width: 140)
+            SettingRow("Local executor model",
+                       tooltip: "The local model served by Ollama/MLX used as primary executor. Must be pulled via 'ollama pull'.") {
+                TextField("qwen3.6:35b-a3b", text: $vm.localModel)
+                    .textFieldStyle(.roundedBorder).frame(width: 180)
             }
-            SettingRow("Ollama timeout (s)",
-                       tooltip: "How long to wait for Ollama before falling back to Claude. Lower = faster fallback.") {
-                Stepper("\(vm.ollamaTimeout)s", value: $vm.ollamaTimeout, in: 5...120, step: 5)
-                    .frame(width: 100)
+            SettingRow("Local executor timeout (s)",
+                       tooltip: "How long to wait for the local model before giving up. Default 300s for large models.") {
+                Stepper("\(vm.localTimeout)s", value: $vm.localTimeout, in: 30...600, step: 30)
+                    .frame(width: 110)
             }
             Text("↺ fields require a server restart to take effect.")
                 .font(.system(size: 11))
@@ -421,14 +444,9 @@ private struct AdvancedSection: View {
                 Stepper("\(vm.maxStepsClaude)", value: $vm.maxStepsClaude, in: 1...30)
                     .frame(width: 80)
             }
-            SettingRow("Max Ollama steps",
-                       tooltip: "How many tool calls the local Ollama agent can make per sub-task.") {
-                Stepper("\(vm.maxStepsOllama)", value: $vm.maxStepsOllama, in: 1...20)
-                    .frame(width: 80)
-            }
-            SettingRow("Max total steps",
-                       tooltip: "Hard cap across all agents in a single command. Prevents runaway execution.") {
-                Stepper("\(vm.maxTotalSteps)", value: $vm.maxTotalSteps, in: 1...50)
+            SettingRow("Max local steps",
+                       tooltip: "How many tool calls the local model can make per command.") {
+                Stepper("\(vm.maxStepsLocal)", value: $vm.maxStepsLocal, in: 1...30)
                     .frame(width: 80)
             }
             SettingRow("Stall detection",
