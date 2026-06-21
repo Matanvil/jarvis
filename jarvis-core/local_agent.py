@@ -57,7 +57,7 @@ def _is_action_trace(text: str) -> bool:
 
 
 # Appended to the base system prompt for local models that need extra guidance
-_OLLAMA_EXTRA = """
+_LOCAL_EXTRA = """
 CRITICAL RULES FOR THIS MODEL:
 - Respond ONLY in English. Never use Thai, Chinese, Arabic, or any non-English language.
 - ALWAYS use the provided tool/function calls to take action. NEVER write tool calls as JSON text in your response.
@@ -72,7 +72,7 @@ CRITICAL RULES FOR THIS MODEL:
 """
 
 
-def _clean_ollama_text(text: str) -> str:
+def _clean_local_text(text: str) -> str:
     """Strip non-English garbage common in qwen/mistral outputs."""
     # Remove embedded tool call JSON blocks the model leaked into text
     text = re.sub(r'\{["\s]*name["\s]*:[^}]+\}', '', text)
@@ -93,7 +93,7 @@ class EscalateToCloud(Exception):
         super().__init__(f"Escalate to Claude: {reason}")
 
 
-def _anthropic_to_ollama_tools(anthropic_tools: list) -> list:
+def _anthropic_to_local_tools(anthropic_tools: list) -> list:
     """Convert Anthropic tool schema format to OpenAI/Ollama format."""
     return [
         {
@@ -108,10 +108,10 @@ def _anthropic_to_ollama_tools(anthropic_tools: list) -> list:
     ]
 
 
-# Exclude delegation tools — OllamaAgent is the delegate, not the delegator.
+# Exclude delegation tools — LocalAgent is the delegate, not the delegator.
 # Routing decisions are made by the pre-flight classifier in Router, not by tool calls.
 _DELEGATION_TOOLS = {"delegate_to_claude_code", "delegate_to_local", "coding_ask", "coding_plan", "coding_review"}
-_OLLAMA_SAFE_TOOL_DEFINITIONS = [t for t in TOOL_DEFINITIONS if t["name"] not in _DELEGATION_TOOLS]
+_LOCAL_SAFE_TOOL_DEFINITIONS = [t for t in TOOL_DEFINITIONS if t["name"] not in _DELEGATION_TOOLS]
 _FINALIZE_TOOL = {
     "type": "function",
     "function": {
@@ -134,7 +134,7 @@ _FINALIZE_TOOL = {
     },
 }
 
-_OLLAMA_TOOLS = _anthropic_to_ollama_tools(_OLLAMA_SAFE_TOOL_DEFINITIONS) + [_FINALIZE_TOOL]
+_LOCAL_TOOLS = _anthropic_to_local_tools(_LOCAL_SAFE_TOOL_DEFINITIONS) + [_FINALIZE_TOOL]
 
 
 _FINALIZE_ANSWER_RE = re.compile(r'"answer"\s*:\s*"')
@@ -319,8 +319,8 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
 
 
 @dataclass
-class _OllamaLoopState:
-    """Mutable state for one Ollama run, carried across a pause/resume so an
+class _LocalLoopState:
+    """Mutable state for one local run, carried across a pause/resume so an
     approved run continues instead of replaying from the original command."""
     messages: list
     tool_calls_made: list
@@ -345,7 +345,7 @@ class _OllamaLoopState:
     pending_dpo: dict | None = None
 
 
-class OllamaAgent:
+class LocalAgent:
     def __init__(self, config: dict, guardrails: Guardrails, mcp_manager=None):
         self._config = config
         self._guardrails = guardrails
@@ -362,11 +362,11 @@ class OllamaAgent:
         )
 
     def _build_tool_list(self) -> list[dict]:
-        """Return Ollama-format tool list with built-ins plus any MCP tools."""
-        base = list(_OLLAMA_TOOLS)
+        """Return local-format tool list with built-ins plus any MCP tools."""
+        base = list(_LOCAL_TOOLS)
         if self._mcp_manager is not None:
             mcp_schemas = self._mcp_manager.tool_schemas()
-            base = base + _anthropic_to_ollama_tools(mcp_schemas)
+            base = base + _anthropic_to_local_tools(mcp_schemas)
         return base
 
     def close(self) -> None:
@@ -390,18 +390,18 @@ class OllamaAgent:
 
     @property
     def _chat_template_kwargs(self) -> dict | None:
-        # rapid-mlx handles chat templating internally — don't inject Ollama-specific kwargs
-        if self._config.get("ollama", {}).get("executor_rapid_mlx"):
+        # rapid-mlx handles chat templating internally — don't inject local-specific kwargs
+        if self._config.get("local", {}).get("executor_rapid_mlx"):
             return None
-        return self._config.get("ollama", {}).get("executor_chat_template_kwargs")
+        return self._config.get("local", {}).get("executor_chat_template_kwargs")
 
     @property
     def _routing_mode(self) -> str:
-        return self._config.get("ollama", {}).get("routing_mode", "ollama_first")
+        return self._config.get("local", {}).get("routing_mode", "automatic")
 
     @property
     def _timeout(self) -> float:
-        return float(self._config.get("ollama", {}).get("timeout_seconds", 300))
+        return float(self._config.get("local", {}).get("timeout_seconds", 300))
 
     _WINDOW = 5
     _NEAR_DUP_THRESHOLD = 3     # same tool ≥ 3 times in window → redundant
@@ -410,22 +410,22 @@ class OllamaAgent:
             history: list | None = None, step_callback=None,
             intent_class: str | None = None, command_id: str | None = None,
             system_prompt: str | None = None) -> dict:
-        """Run Ollama tool-use loop. Raises EscalateToCloud if Ollama can't handle it.
+        """Run local tool-use loop. Raises EscalateToCloud if local executor can't handle it.
         Returns same dict shape as Agent.run(). When command_id is given and the run
         pauses for approval, a resume callable is registered so it can continue
         server-side without replaying earlier steps."""
         if system_prompt is not None:
             system_msg = system_prompt
         else:
-            system_msg = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~")) + _OLLAMA_EXTRA
+            system_msg = _BASE_SYSTEM_PROMPT.format(home=os.path.expanduser("~")) + _LOCAL_EXTRA
             if cwd:
                 system_msg += f"\nActive project directory: {cwd}\n"
             if memory_context:
                 system_msg += f"\nProject memory: {memory_context}\n"
 
-        max_steps = int(self._config.get("reasoning", {}).get("max_steps_ollama", 15))
+        max_steps = int(self._config.get("reasoning", {}).get("max_steps_local", 15))
 
-        state = _OllamaLoopState(
+        state = _LocalLoopState(
             messages=[
                 {"role": "system", "content": system_msg},
                 *(history or []),
@@ -445,7 +445,7 @@ class OllamaAgent:
         )
         return self._outer_loop(state, step_callback)
 
-    def resume(self, state: "_OllamaLoopState", step_callback=None) -> dict:
+    def resume(self, state: "_LocalLoopState", step_callback=None) -> dict:
         """Continue a run paused for approval: finish the paused tool batch (execute
         the now-approved tool and any remaining calls), then run the outer loop."""
         tool_calls = state.pending_tool_calls
@@ -456,7 +456,7 @@ class OllamaAgent:
             return result
         return self._outer_loop(state, step_callback)
 
-    def _outer_loop(self, state: "_OllamaLoopState", step_callback) -> dict:
+    def _outer_loop(self, state: "_LocalLoopState", step_callback) -> dict:
         url = f"{self._host}/v1/chat/completions"
         wrap_up_step = state.max_steps - 2
         try:
@@ -485,7 +485,7 @@ class OllamaAgent:
                     state.gen_metrics = call_metrics  # keep last text-generating call's metrics
 
                 if finish == "stop" or not msg.get("tool_calls"):
-                    text = _clean_ollama_text(msg.get("content") or "")
+                    text = _clean_local_text(msg.get("content") or "")
                     if not text and not state.tool_calls_made and finish != "stop":
                         # Thinking may have exhausted the token budget leaving empty content.
                         # Retry once with thinking disabled before escalating.
@@ -572,11 +572,11 @@ class OllamaAgent:
                     return result
 
         except httpx.ConnectError as e:
-            raise EscalateToCloud(f"Ollama unavailable: {e}")
+            raise EscalateToCloud(f"Local executor unavailable: {e}")
         except httpx.TimeoutException as e:
-            raise EscalateToCloud(f"Ollama timeout: {e}")
+            raise EscalateToCloud(f"Local executor timeout: {e}")
         except httpx.HTTPStatusError as e:
-            raise EscalateToCloud(f"Ollama HTTP error: {e}")
+            raise EscalateToCloud(f"Local executor HTTP error: {e}")
 
         # Salvage: one final no-tools call to emit whatever the model gathered
         try:
@@ -584,7 +584,7 @@ class OllamaAgent:
                 url, json={"model": self._model, "messages": state.messages, "tool_choice": "none"},
             )
             salvage_resp.raise_for_status()
-            salvage_text = _clean_ollama_text(
+            salvage_text = _clean_local_text(
                 salvage_resp.json()["choices"][0]["message"].get("content") or ""
             )
             if salvage_text:
@@ -598,7 +598,7 @@ class OllamaAgent:
         result["steps"] = state.steps
         return result
 
-    def _process_tools(self, state: "_OllamaLoopState", tool_calls: list, start_idx: int,
+    def _process_tools(self, state: "_LocalLoopState", tool_calls: list, start_idx: int,
                        step_callback) -> tuple[str, dict | None]:
         """Process the tool calls of one assistant turn from start_idx. Returns
         ("final", result) if it concluded, ("paused", approval) if it stopped for
@@ -659,7 +659,7 @@ class OllamaAgent:
                         url, json={"model": self._model, "messages": state.messages, "tool_choice": "none"},
                     )
                     nr.raise_for_status()
-                    nr_text = _clean_ollama_text(nr.json()["choices"][0]["message"].get("content") or "")
+                    nr_text = _clean_local_text(nr.json()["choices"][0]["message"].get("content") or "")
                     if nr_text:
                         result = format_response(nr_text, state.tool_calls_made)
                         result["steps"] = state.steps
@@ -682,7 +682,7 @@ class OllamaAgent:
                         url, json={"model": self._model, "messages": state.messages},
                     )
                     resp2.raise_for_status()
-                    text = _clean_ollama_text(resp2.json()["choices"][0]["message"].get("content") or "")
+                    text = _clean_local_text(resp2.json()["choices"][0]["message"].get("content") or "")
                     result = format_response(text, state.tool_calls_made)
                     result["steps"] = state.steps
                     return ("final", result)
@@ -708,7 +708,7 @@ class OllamaAgent:
                     approval_store.register(
                         state.command_id,
                         lambda step_callback=None, _s=state: self.resume(_s, step_callback),
-                        {"user_text": state.user_text, "agent": "ollama", "model": self._model},
+                        {"user_text": state.user_text, "agent": "local", "model": self._model},
                     )
                 return ("paused", {
                     "speak": None, "display": None,

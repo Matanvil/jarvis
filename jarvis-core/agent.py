@@ -448,7 +448,7 @@ class _ClaudeLoopState:
     system_prompt: str
     cwd: str | None
     source: str
-    ollama_available: bool
+    local_available: bool
     command_id: str | None
     user_text: str
     # Resume point — set only while paused mid-turn.
@@ -501,7 +501,7 @@ class Agent:
         return prompt
 
     def run(self, user_text: str, cwd: str | None = None, memory_context: str = "",
-            history: list | None = None, ollama_available: bool = True,
+            history: list | None = None, local_available: bool = True,
             source: str = "", step_callback=None, command_id: str | None = None,
             system_prompt: str | None = None) -> dict:
         """Run the agent loop. cwd sets the active project directory for all tool calls.
@@ -517,7 +517,7 @@ class Agent:
             system_prompt=system_prompt if system_prompt is not None else self._build_system_prompt(cwd, memory_context, source),
             cwd=cwd,
             source=source,
-            ollama_available=ollama_available,
+            local_available=local_available,
             command_id=command_id,
             user_text=user_text,
         )
@@ -554,7 +554,7 @@ class Agent:
             # Omit notify for scheduled tasks — the scheduler fires the notification itself.
             available_tools = [
                 t for t in self._build_tool_list()
-                if (t["name"] != "delegate_to_local" or state.ollama_available)
+                if (t["name"] != "delegate_to_local" or state.local_available)
                 and (t["name"] != "notify" or state.source != "scheduled")
             ]
 

@@ -8,11 +8,11 @@ from datetime import date as _date
 from classifier_prompt import CLASSIFY_SYSTEM_PROMPT
 from git_context import get_git_context
 from guardrails import Guardrails
-from ollama_agent import OllamaAgent, EscalateToCloud
+from local_agent import LocalAgent, EscalateToCloud
 from agent import Agent, claude_code_available
 from prompt_loader import PromptLoader
 
-_VALID_ROUTING_MODES = {"ollama_first", "claude_only", "ollama_only", "haiku_first", "local_first"}
+_VALID_ROUTING_MODES = {"local", "cloud", "automatic"}
 
 
 class Router:
@@ -23,14 +23,14 @@ class Router:
     def __init__(self, config: dict, guardrails: Guardrails, prompt_loader: PromptLoader | None = None, mcp_manager=None):
         self._config = config
         self._http_client = httpx.Client(timeout=httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=5.0))
-        self._ollama = OllamaAgent(config=config, guardrails=guardrails, mcp_manager=mcp_manager)
+        self._local = LocalAgent(config=config, guardrails=guardrails, mcp_manager=mcp_manager)
         haiku_model = config.get("models", {}).get("haiku", "claude-haiku-4-5-20251001")
         sonnet_model = config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
         self._haiku = Agent(config=config, guardrails=guardrails,
-                            local_agent=self._ollama, model=haiku_model, mcp_manager=mcp_manager)
+                            local_agent=self._local, model=haiku_model, mcp_manager=mcp_manager)
         self._sonnet = Agent(config=config, guardrails=guardrails,
-                             local_agent=self._ollama, model=sonnet_model, mcp_manager=mcp_manager)
-        self._claude = self._sonnet   # legacy alias for claude_only / ollama_first modes
+                             local_agent=self._local, model=sonnet_model, mcp_manager=mcp_manager)
+        self._claude = self._sonnet   # alias kept for tests that wire _claude directly
         self._history: list[dict] = []
         self._pending_compaction_notice: bool = False
         self._needs_compaction: bool = False
@@ -51,11 +51,11 @@ class Router:
         self._last_git_context = None
         self._pending_compaction_notice = False
 
-        mode = self._config.get("ollama", {}).get("routing_mode", "ollama_first")
+        mode = self._config.get("local", {}).get("routing_mode", "automatic")
         if mode not in _VALID_ROUTING_MODES:
             logging.getLogger("jarvis.errors").warning(
                 f"Invalid routing_mode '{mode}'. Must be one of {sorted(_VALID_ROUTING_MODES)}. "
-                f"Falling back to 'ollama_first'."
+                f"Falling back to 'automatic'."
             )
 
         if not claude_code_available():
@@ -66,11 +66,11 @@ class Router:
 
     @property
     def _routing_mode(self) -> str:
-        return self._config.get("ollama", {}).get("routing_mode", "ollama_first")
+        return self._config.get("local", {}).get("routing_mode", "automatic")
 
     @property
-    def _ollama_model(self) -> str:
-        return self._config.get("ollama", {}).get("model", "mistral:latest")
+    def _local_model(self) -> str:
+        return self._config.get("local", {}).get("model", "mistral:latest")
 
     @property
     def _classifier_model(self) -> str:
@@ -83,12 +83,12 @@ class Router:
         return cfg.classifier_backend(self._config)[0]
 
     @property
-    def _ollama_host(self) -> str:
-        return self._config.get("ollama", {}).get("host", "http://localhost:11434")
+    def _local_host(self) -> str:
+        return self._config.get("local", {}).get("host", "http://localhost:11434")
 
     @property
-    def _ollama_timeout(self) -> float:
-        return float(self._config.get("ollama", {}).get("timeout_seconds", 30))
+    def _local_timeout(self) -> float:
+        return float(self._config.get("local", {}).get("timeout_seconds", 30))
 
     def _classify(self, text: str, history: list | None = None) -> dict:
         """Ask the classifier to classify intent. Returns classification dict.
@@ -250,48 +250,20 @@ class Router:
             step_callback({"type": "compacted", "message": "Context compacted."})
             self._pending_compaction_notice = False
 
-        # haiku_first: pre-flight classifies → Haiku for non-complex, Sonnet for complex_reasoning
-        if mode == "haiku_first":
-            classification = {"can_handle_locally": True, "intent_class": "read_only", "reason": "fallback"}
-            try:
-                classification = self._classify(text, history=self._history)
-            except Exception as e:
-                logging.getLogger("jarvis.errors").warning(
-                    f"Pre-flight classifier failed: {e} — using haiku"
-                )
-
-            intent_class = classification.get("intent_class", "read_only")
-            use_sonnet = intent_class == "complex_reasoning"
-            agent = self._sonnet if use_sonnet else self._haiku
-            model_name = (self._config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
-                          if use_sonnet else
-                          self._config.get("models", {}).get("haiku", "claude-haiku-4-5-20251001"))
-
-            user_text = self._build_user_prefix(text, cwd, memory_context, intent_class, source)
-
-            gate = self._gate_destructive(
-                intent_class, command_id,
-                lambda sc, _a=agent, _ut=user_text, _mn=model_name: (
-                    _a.run(user_text=_ut, cwd=cwd, history=self._history, source=source,
-                           step_callback=sc, command_id=command_id,
-                           system_prompt=self._get_system_prompt(cwd))
-                ),
-                {"user_text": text, "agent": "claude", "model": model_name,
-                 "intent_class": intent_class, "escalation_reason": classification.get("reason")},
-            )
-            if gate is not None:
-                return gate
-
-            result = agent.run(user_text=user_text, cwd=cwd, history=self._history, source=source,
-                               step_callback=step_callback, command_id=command_id,
-                               system_prompt=self._get_system_prompt(cwd))
+        # cloud: skip classifier entirely, go straight to Sonnet
+        if mode == "cloud":
+            user_text = self._build_user_prefix(text, cwd, memory_context, None, source)
+            result = self._sonnet.run(user_text=user_text, cwd=cwd, history=self._history, source=source,
+                                      step_callback=step_callback, command_id=command_id,
+                                      system_prompt=self._get_system_prompt(cwd))
             self._append_turn(text, result)
+            model_name = self._config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
             return self._annotate(result, agent="claude", model=model_name,
-                                  escalated=False, escalation_reason=classification.get("reason"),
-                                  intent_class=intent_class, start=start)
+                                  escalated=False, escalation_reason=None,
+                                  intent_class=None, start=start)
 
-        # local_first: pre-flight classifies → OllamaAgent for non-complex, Sonnet for complex_reasoning
-        if mode == "local_first":
+        # local: always local, suppress EscalateToCloud
+        if mode == "local":
             classification = {"can_handle_locally": True, "intent_class": "read_only", "reason": "fallback"}
             try:
                 classification = self._classify(text, history=self._history)
@@ -303,134 +275,112 @@ class Router:
             intent_class = classification.get("intent_class", "read_only")
             user_text = self._build_user_prefix(text, cwd, memory_context, intent_class, source)
 
-            if intent_class == "complex_reasoning":
-                result = self._sonnet.run(
-                    user_text=user_text, cwd=cwd, history=self._history, source=source,
-                    step_callback=step_callback, command_id=command_id,
-                    system_prompt=self._get_system_prompt(cwd),
-                )
-                self._append_turn(text, result)
-                model_name = self._config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
-                return self._annotate(result, agent="claude", model=model_name,
-                                      escalated=False, escalation_reason=classification.get("reason"),
-                                      intent_class=intent_class, start=start)
-
             gate = self._gate_destructive(
                 intent_class, command_id,
-                lambda sc, _ut=user_text: self._ollama.run(
+                lambda sc, _ut=user_text: self._local.run(
                     user_text=_ut, cwd=cwd, history=self._history,
                     step_callback=sc, intent_class=intent_class, command_id=command_id,
                     system_prompt=self._get_local_system_prompt(cwd),
                 ),
-                {"user_text": text, "agent": "ollama",
-                 "model": self._config.get("ollama", {}).get("executor_model") or self._ollama_model,
+                {"user_text": text, "agent": "local",
+                 "model": self._config.get("local", {}).get("executor_model") or self._local_model,
                  "intent_class": intent_class},
             )
             if gate is not None:
                 return gate
 
-            # Non-complex: use local OllamaAgent; escalate to Sonnet on failure
             try:
-                result = self._ollama.run(
+                result = self._local.run(
                     user_text=user_text, cwd=cwd, history=self._history,
                     step_callback=step_callback, intent_class=intent_class, command_id=command_id,
                     system_prompt=self._get_local_system_prompt(cwd),
                 )
                 self._append_turn(text, result)
-                executor_model = self._config.get("ollama", {}).get("executor_model") or self._ollama_model
-                return self._annotate(result, agent="ollama", model=executor_model,
+                executor_model = self._config.get("local", {}).get("executor_model") or self._local_model
+                return self._annotate(result, agent="local", model=executor_model,
                                       escalated=False, escalation_reason=None,
                                       intent_class=intent_class, start=start)
             except EscalateToCloud as e:
                 logging.getLogger("jarvis.errors").warning(
-                    f"Local executor could not complete task: {e.reason}"
+                    f"Local executor could not complete task (suppressed): {e.reason}"
                 )
-                msg = "I wasn't able to complete that locally. Please try rephrasing or break the task into smaller steps."
+                msg = "I wasn't able to complete that locally. Please try rephrasing or restart the server if this keeps happening."
                 result = {"speak": msg, "display": msg, "steps": []}
-                return self._annotate(result, agent="ollama", model=self._ollama_model,
-                                      escalated=True, escalation_reason=f"suppressed:local_first:{e.reason}",
+                return self._annotate(result, agent="local", model=self._local_model,
+                                      escalated=True, escalation_reason=f"suppressed:local:{e.reason}",
                                       intent_class=intent_class, start=start)
 
-        # claude_only: skip classifier entirely
-        if mode == "claude_only":
-            user_text = self._build_user_prefix(text, cwd, memory_context, None, source)
-            result = self._claude.run(user_text=user_text, cwd=cwd, history=self._history, source=source,
-                                      step_callback=step_callback, command_id=command_id,
-                                      system_prompt=self._get_system_prompt(cwd))
-            self._append_turn(text, result)
-            return self._annotate(result, agent="claude", model="claude-sonnet-4-6",
-                                  escalated=False, escalation_reason=None,
-                                  intent_class=None, start=start)
-
-        # Pre-flight classification (ollama_first / ollama_only)
+        # automatic: pre-flight classifies → local for non-complex, Sonnet for complex_reasoning
+        # (this is the default branch when mode == "automatic" or unrecognised)
         classification = {"can_handle_locally": True, "intent_class": "read_only", "reason": "fallback"}
         try:
             classification = self._classify(text, history=self._history)
         except Exception as e:
             logging.getLogger("jarvis.errors").warning(
-                f"Pre-flight classifier failed: {e} — using ollama_first fallback"
+                f"Pre-flight classifier failed: {e} — using local executor"
             )
 
         intent_class = classification.get("intent_class", "read_only")
-        can_handle_locally = classification.get("can_handle_locally", True)
         user_text = self._build_user_prefix(text, cwd, memory_context, intent_class, source)
+
+        if intent_class == "complex_reasoning":
+            result = self._sonnet.run(
+                user_text=user_text, cwd=cwd, history=self._history, source=source,
+                step_callback=step_callback, command_id=command_id,
+                system_prompt=self._get_system_prompt(cwd),
+            )
+            self._append_turn(text, result)
+            model_name = self._config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
+            return self._annotate(result, agent="claude", model=model_name,
+                                  escalated=False, escalation_reason=classification.get("reason"),
+                                  intent_class=intent_class, start=start)
 
         gate = self._gate_destructive(
             intent_class, command_id,
-            lambda sc, _ut=user_text: self._ollama.run(
+            lambda sc, _ut=user_text: self._local.run(
                 user_text=_ut, cwd=cwd, history=self._history,
                 step_callback=sc, intent_class=intent_class, command_id=command_id,
                 system_prompt=self._get_local_system_prompt(cwd),
             ),
-            {"user_text": text, "agent": "ollama", "model": self._ollama_model,
+            {"user_text": text, "agent": "local",
+             "model": self._config.get("local", {}).get("executor_model") or self._local_model,
              "intent_class": intent_class},
         )
         if gate is not None:
             return gate
 
-        escalation_reason = None
-        if mode == "ollama_only" or can_handle_locally:
-            try:
-                result = self._ollama.run(
-                    user_text=user_text, cwd=cwd, history=self._history,
-                    step_callback=step_callback, intent_class=intent_class, command_id=command_id,
-                    system_prompt=self._get_local_system_prompt(cwd),
-                )
-                self._append_turn(text, result)
-                return self._annotate(result, agent="ollama", model=self._ollama_model,
-                                      escalated=False, escalation_reason=None,
-                                      intent_class=intent_class, start=start)
-            except EscalateToCloud as e:
-                if mode == "ollama_only":
-                    msg = "I wasn't able to complete that locally. Please try rephrasing or restart the server if this keeps happening."
-                    result = {"speak": msg, "display": msg, "steps": []}
-                    return self._annotate(result, agent="ollama", model=self._ollama_model,
-                                          escalated=True, escalation_reason=f"suppressed:ollama_only:{e.reason}",
-                                          intent_class=intent_class, start=start)
-                # ollama_first: Ollama unavailable or escalated — fall through to Claude
-                escalation_reason = e.reason
-                logging.getLogger("jarvis.errors").warning(
-                    f"Ollama escalated to Claude: {e.reason}"
-                )
-
-        # can_handle_locally=False OR Ollama escalated: route to Claude
-        # Pass ollama_available=False when escalated so Claude doesn't waste a step on delegate_to_local
         try:
-            result = self._claude.run(
+            result = self._local.run(
                 user_text=user_text, cwd=cwd, history=self._history,
-                ollama_available=(escalation_reason is None), source=source,
-                step_callback=step_callback, command_id=command_id,
-                system_prompt=self._get_system_prompt(cwd),
+                step_callback=step_callback, intent_class=intent_class, command_id=command_id,
+                system_prompt=self._get_local_system_prompt(cwd),
             )
-        except _anthropic.APIStatusError as e:
-            logging.getLogger("jarvis.errors").error(f"Anthropic API error during cloud fallback: {e}")
-            msg = "Cloud fallback unavailable (API error). Please check your Anthropic API credits or try again later."
-            result = {"speak": msg, "display": msg, "steps": []}
-        self._append_turn(text, result)
-        return self._annotate(result, agent="claude", model="claude-sonnet-4-6",
-                              escalated=escalation_reason is not None,
-                              escalation_reason=escalation_reason or classification.get("reason"),
-                              intent_class=intent_class, start=start)
+            self._append_turn(text, result)
+            executor_model = self._config.get("local", {}).get("executor_model") or self._local_model
+            return self._annotate(result, agent="local", model=executor_model,
+                                  escalated=False, escalation_reason=None,
+                                  intent_class=intent_class, start=start)
+        except EscalateToCloud as e:
+            logging.getLogger("jarvis.errors").warning(
+                f"Local executor escalated to cloud: {e.reason}"
+            )
+            # Fall through to Sonnet
+            try:
+                result = self._sonnet.run(
+                    user_text=user_text, cwd=cwd, history=self._history,
+                    local_available=False, source=source,
+                    step_callback=step_callback, command_id=command_id,
+                    system_prompt=self._get_system_prompt(cwd),
+                )
+            except _anthropic.APIStatusError as api_err:
+                logging.getLogger("jarvis.errors").error(f"Anthropic API error during cloud fallback: {api_err}")
+                msg = "Cloud fallback unavailable (API error). Please check your Anthropic API credits or try again later."
+                result = {"speak": msg, "display": msg, "steps": []}
+            self._append_turn(text, result)
+            model_name = self._config.get("models", {}).get("sonnet", "claude-sonnet-4-6")
+            return self._annotate(result, agent="claude", model=model_name,
+                                  escalated=True, escalation_reason=e.reason,
+                                  intent_class=intent_class, start=start)
 
     def _append_turn(self, user_text: str, result: dict) -> None:
         """Append a compressed turn to history. Skip if approval_required."""

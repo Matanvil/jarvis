@@ -7,7 +7,7 @@ from tools.coding_agent import CodingAgentTool
 CONFIG = {
     "anthropic_api_key": "sk-test",
     "models": {"haiku": "claude-haiku-4-5-20251001"},
-    "ollama": {"host": "http://localhost:11434"},
+    "local": {"host": "http://localhost:11434"},
 }
 
 
@@ -30,9 +30,9 @@ def test_init_creates_components():
     )
 
 
-def test_init_sets_force_local_when_routing_mode_is_ollama_only():
-    """CodingAgentTool sets force_local=True on HybridClient when routing_mode is ollama_only."""
-    config = {**CONFIG, "local_model": "qwen3-coder:30b", "ollama": {**CONFIG["ollama"], "routing_mode": "ollama_only"}}
+def test_init_sets_force_local_when_routing_mode_is_local():
+    """CodingAgentTool sets force_local=True on HybridClient when routing_mode is 'local'."""
+    config = {**CONFIG, "local_model": "qwen3-coder:30b", "local": {**CONFIG["local"], "routing_mode": "local"}}
     with patch("tools.coding_agent.ClaudeClient"), \
          patch("tools.coding_agent.OllamaClient"), \
          patch("tools.coding_agent.HybridClient") as MockHybrid, \
@@ -41,9 +41,9 @@ def test_init_sets_force_local_when_routing_mode_is_ollama_only():
     assert MockHybrid.return_value.force_local is True
 
 
-def test_init_does_not_set_force_local_when_routing_mode_is_local_first():
-    """CodingAgentTool leaves force_local=False when routing_mode is local_first."""
-    config = {**CONFIG, "local_model": "qwen3-coder:30b", "ollama": {**CONFIG["ollama"], "routing_mode": "local_first"}}
+def test_init_does_not_set_force_local_when_routing_mode_is_automatic():
+    """CodingAgentTool leaves force_local=False when routing_mode is 'automatic'."""
+    config = {**CONFIG, "local_model": "qwen3-coder:30b", "local": {**CONFIG["local"], "routing_mode": "automatic"}}
     with patch("tools.coding_agent.ClaudeClient"), \
          patch("tools.coding_agent.OllamaClient"), \
          patch("tools.coding_agent.HybridClient") as MockHybrid, \

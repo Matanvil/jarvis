@@ -50,7 +50,7 @@ def load_dependencies():
     return pipeline, loggers, guardrails, store
 
 
-def _ensure_ollama_running() -> None:
+def _ensure_local_executor_running() -> None:
     """Start ollama serve in the background if it isn't already running."""
     # When launched from a macOS app the PATH is minimal — probe Homebrew locations directly.
     ollama_bin = (
@@ -78,12 +78,12 @@ def _ensure_ollama_running() -> None:
 def _ensure_executor_server_running(config: dict) -> None:
     """Start the executor inference server if a local routing mode is active and it isn't already running.
     Uses vllm_mlx.server when executor_rapid_mlx=True, mlx_lm.server otherwise."""
-    ollama_cfg = config.get("ollama", {})
-    if ollama_cfg.get("routing_mode") not in ("local_first", "ollama_only", "ollama_first"):
+    local_cfg = config.get("local", {})
+    if local_cfg.get("routing_mode") not in ("local", "automatic"):
         return
-    base_host = ollama_cfg.get("host", "http://localhost:11434")
-    executor_host = ollama_cfg.get("executor_host", "")
-    executor_model = ollama_cfg.get("executor_model", "")
+    base_host = local_cfg.get("host", "http://localhost:11434")
+    executor_host = local_cfg.get("executor_host", "")
+    executor_model = local_cfg.get("executor_model", "")
     if not executor_host or not executor_model:
         return
     if executor_host == base_host:
@@ -100,7 +100,7 @@ def _ensure_executor_server_running(config: dict) -> None:
     parsed = urlparse(executor_host)
     port = parsed.port or 8093
 
-    if ollama_cfg.get("executor_rapid_mlx"):
+    if local_cfg.get("executor_rapid_mlx"):
         python_bin = (
             shutil.which("python3")
             or shutil.which("python")
@@ -108,7 +108,7 @@ def _ensure_executor_server_running(config: dict) -> None:
         if not python_bin:
             logging.warning("[Jarvis] python not found — skipping vllm_mlx executor auto-start")
             return
-        max_tokens = str(ollama_cfg.get("executor_max_tokens", 8192))
+        max_tokens = str(local_cfg.get("executor_max_tokens", 8192))
         cmd = [
             python_bin, "-m", "vllm_mlx.server",
             "--model", executor_model,
@@ -125,7 +125,7 @@ def _ensure_executor_server_running(config: dict) -> None:
         if not mlx_bin:
             logging.warning("[Jarvis] mlx_lm.server binary not found — skipping executor auto-start")
             return
-        chat_template_kwargs = ollama_cfg.get("executor_chat_template_kwargs", {})
+        chat_template_kwargs = local_cfg.get("executor_chat_template_kwargs", {})
         chat_template_args = json.dumps(chat_template_kwargs) if chat_template_kwargs else None
         cmd = [mlx_bin, "--model", executor_model, "--port", str(port)]
         if chat_template_args:
@@ -136,14 +136,14 @@ def _ensure_executor_server_running(config: dict) -> None:
 
 def _ensure_classifier_server_running(config: dict) -> None:
     """Start mlx_lm.server for the classifier if it runs on a separate host and isn't already up."""
-    ollama_cfg = config.get("ollama", {})
-    base_host = ollama_cfg.get("host", "http://localhost:11434")
-    classifier_host = ollama_cfg.get("classifier_host", "")
-    classifier_model = ollama_cfg.get("classifier_model", "")
+    local_cfg = config.get("local", {})
+    base_host = local_cfg.get("host", "http://localhost:11434")
+    classifier_host = local_cfg.get("classifier_host", "")
+    classifier_model = local_cfg.get("classifier_model", "")
     if not classifier_host or not classifier_model:
         return
     if classifier_host == base_host:
-        return  # classifier is on Ollama, no MLX server needed
+        return  # classifier is on local executor host, no separate MLX server needed
 
     try:
         r = httpx.get(f"{classifier_host}/v1/models", timeout=2)
@@ -166,7 +166,7 @@ def _ensure_classifier_server_running(config: dict) -> None:
 
     cmd = [mlx_bin, "--model", classifier_model, "--port", str(port)]
 
-    adapter_path = ollama_cfg.get("classifier_adapter_path", "")
+    adapter_path = local_cfg.get("classifier_adapter_path", "")
     if adapter_path and os.path.exists(adapter_path):
         cmd += ["--adapter-path", adapter_path]
 
@@ -179,7 +179,7 @@ def _ensure_classifier_server_running(config: dict) -> None:
 async def lifespan(app: FastAPI):
     global _pipeline, _loggers, _guardrails
     config = cfg_module.load()
-    _ensure_ollama_running()
+    _ensure_local_executor_running()
     _ensure_executor_server_running(config)
     _ensure_classifier_server_running(config)
     alert_bus.set_loop(asyncio.get_running_loop())

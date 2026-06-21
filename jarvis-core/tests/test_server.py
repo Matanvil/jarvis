@@ -205,8 +205,8 @@ def test_ensure_executor_server_running_skips_when_executor_uses_ollama_host(cli
     import server as srv
 
     cfg = {
-        "ollama": {
-            "routing_mode": "local_first",
+        "local": {
+            "routing_mode": "automatic",
             "host": "http://localhost:11434",
             "executor_host": "http://localhost:11434",
             "executor_model": "qwen3.6:35b-a3b",
@@ -221,7 +221,7 @@ def test_ensure_classifier_server_running_skips_when_uses_ollama_host(client_and
     import server as srv
 
     cfg = {
-        "ollama": {
+        "local": {
             "host": "http://localhost:11434",
             "classifier_host": "http://localhost:11434",
             "classifier_model": "some-model",
@@ -236,7 +236,7 @@ def test_ensure_classifier_server_running_starts_server_without_adapter(client_a
     import server as srv
 
     cfg = {
-        "ollama": {
+        "local": {
             "host": "http://localhost:11434",
             "classifier_host": "http://127.0.0.1:8090",
             "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
@@ -263,7 +263,7 @@ def test_ensure_classifier_server_running_includes_adapter_path_when_configured(
     (tmp_path / "classifier_adapters").mkdir()
 
     cfg = {
-        "ollama": {
+        "local": {
             "host": "http://localhost:11434",
             "classifier_host": "http://127.0.0.1:8090",
             "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
@@ -284,7 +284,7 @@ def test_ensure_classifier_server_running_skips_adapter_path_when_dir_missing(cl
     import server as srv
 
     cfg = {
-        "ollama": {
+        "local": {
             "host": "http://localhost:11434",
             "classifier_host": "http://127.0.0.1:8090",
             "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
@@ -304,7 +304,7 @@ def test_ensure_classifier_server_running_skips_if_already_running(client_and_ag
     import server as srv
 
     cfg = {
-        "ollama": {
+        "local": {
             "host": "http://localhost:11434",
             "classifier_host": "http://127.0.0.1:8090",
             "classifier_model": "mlx-community/Qwen3-4B-Instruct-2507-4bit",

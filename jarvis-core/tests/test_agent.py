@@ -881,6 +881,15 @@ def test_result_summary_capped_at_200_chars():
     assert len(result["steps"][0]["result_summary"]) <= 200
 
 
+def test_agent_run_accepts_local_available_param():
+    """Agent.run() must accept local_available keyword argument (renamed from ollama_available)."""
+    import inspect
+    from agent import Agent
+    sig = inspect.signature(Agent.run)
+    assert "local_available" in sig.parameters
+    assert "ollama_available" not in sig.parameters
+
+
 def test_wrap_up_nudge_injected_near_step_limit():
     agent = make_agent()
     agent._config["reasoning"] = {"max_steps_claude": 5}
