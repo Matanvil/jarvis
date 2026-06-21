@@ -8,7 +8,7 @@ from datetime import date as _date
 from classifier_prompt import CLASSIFY_SYSTEM_PROMPT
 from git_context import get_git_context
 from guardrails import Guardrails
-from ollama_agent import OllamaAgent, EscalateToCloud
+from local_agent import LocalAgent as OllamaAgent, EscalateToCloud
 from agent import Agent, claude_code_available
 from prompt_loader import PromptLoader
 

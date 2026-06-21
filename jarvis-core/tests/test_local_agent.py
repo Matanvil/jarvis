@@ -2,7 +2,7 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 from guardrails import Guardrails
-from ollama_agent import OllamaAgent, EscalateToCloud, _anthropic_to_ollama_tools
+from local_agent import LocalAgent, EscalateToCloud, _anthropic_to_local_tools
 
 
 # ── helper: build a fake Ollama HTTP response ─────────────────────────────────
@@ -39,18 +39,18 @@ def agent(tmp_path, monkeypatch):
     import config
     cfg = config.load()
     guardrails = Guardrails(cfg)
-    return OllamaAgent(config=cfg, guardrails=guardrails)
+    return LocalAgent(config=cfg, guardrails=guardrails)
 
 
 # ── tool schema translation ───────────────────────────────────────────────────
 
-def test_anthropic_to_ollama_tools_converts_schema():
+def test_anthropic_to_local_tools_converts_schema():
     anthropic_tools = [{
         "name": "shell_run",
         "description": "Run a shell command",
         "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}
     }]
-    result = _anthropic_to_ollama_tools(anthropic_tools)
+    result = _anthropic_to_local_tools(anthropic_tools)
     assert result[0]["type"] == "function"
     assert result[0]["function"]["name"] == "shell_run"
     assert result[0]["function"]["parameters"]["properties"]["command"]["type"] == "string"
@@ -58,7 +58,7 @@ def test_anthropic_to_ollama_tools_converts_schema():
 
 # ── happy path: Ollama returns final answer immediately ───────────────────────
 
-def test_run_returns_response_when_ollama_answers(agent):
+def test_run_returns_response_when_local_answers(agent):
     with patch("httpx.Client.post", return_value=_stop_response("Your Downloads are empty.")):
         result = agent.run("list my Downloads", cwd=None)
     assert result["speak"] == "Your Downloads are empty."
@@ -79,10 +79,10 @@ def test_run_executes_tool_and_returns_response(agent):
     assert result["speak"] == "You have 3 files in Downloads."
 
 
-# ── ollama_only mode: no escalation raised, just max-iter response ────────────
+# ── local mode: no escalation raised, just max-iter response ────────────
 
-def test_run_in_ollama_only_mode_does_not_raise_escalate(agent):
-    agent._config["ollama"]["routing_mode"] = "ollama_only"
+def test_run_in_local_mode_does_not_raise_escalate(agent):
+    agent._config["local"]["routing_mode"] = "local"
     responses = [
         _tool_response("escalate_to_claude", {"reason": "requires web search"}, "call_1"),
         _stop_response("I cannot search the web in offline mode."),
@@ -94,7 +94,7 @@ def test_run_in_ollama_only_mode_does_not_raise_escalate(agent):
 
 # ── connection error: Ollama not running ──────────────────────────────────────
 
-def test_run_raises_escalate_when_ollama_unreachable(agent):
+def test_run_raises_escalate_when_local_unreachable(agent):
     import httpx
     with patch("httpx.Client.post", side_effect=httpx.ConnectError("connection refused")):
         with pytest.raises(EscalateToCloud) as exc_info:
@@ -104,7 +104,7 @@ def test_run_raises_escalate_when_ollama_unreachable(agent):
 
 # ── timeout: Ollama too slow (model loading) ─────────────────────────────────
 
-def test_run_raises_escalate_when_ollama_times_out(agent):
+def test_run_raises_escalate_when_local_times_out(agent):
     import httpx
     with patch("httpx.Client.post", side_effect=httpx.ReadTimeout("timed out")):
         with pytest.raises(EscalateToCloud) as exc_info:
@@ -134,7 +134,7 @@ def test_run_recovers_from_malformed_tool_arguments(agent):
 
 # ── HTTP error: Ollama returns 503 (model not loaded) ─────────────────────────
 
-def test_run_raises_escalate_when_ollama_returns_http_error(agent):
+def test_run_raises_escalate_when_local_returns_http_error(agent):
     import httpx
     mock_resp = MagicMock()
     mock_resp.status_code = 503
@@ -169,12 +169,12 @@ def test_run_returns_approval_required_when_guardrails_block(agent):
 
 # ── delegate_to_claude_code is not offered to Ollama ─────────────────────────
 
-def test_ollama_tools_exclude_delegate_to_claude_code():
-    from ollama_agent import _OLLAMA_TOOLS
-    names = [t["function"]["name"] for t in _OLLAMA_TOOLS]
+def test_local_tools_exclude_delegate_to_claude_code():
+    from local_agent import _LOCAL_TOOLS
+    names = [t["function"]["name"] for t in _LOCAL_TOOLS]
     assert "delegate_to_claude_code" not in names
     assert "escalate_to_claude" not in names   # removed: pre-flight classifier handles routing
-    assert "delegate_to_local" not in names    # Claude-only tool: Ollama is the delegate, not the delegator
+    assert "delegate_to_local" not in names    # Claude-only tool: LocalAgent is the delegate, not the delegator
 
 
 def test_run_injects_memory_context_into_messages(agent):
@@ -223,9 +223,9 @@ def test_salvage_call_on_step_exhaustion(agent):
             call_num[0] += 1
         return resp
 
-    agent._config["reasoning"]["max_steps_ollama"] = 3
+    agent._config["reasoning"]["max_steps_local"] = 3
     with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", return_value="file list"):
+        with patch("local_agent.execute_tool", return_value="file list"):
             result = agent.run("what are my specs")
 
     assert len(salvage_calls) >= 1, "Salvage call should have been made after exhausting steps"
@@ -258,10 +258,10 @@ def test_salvage_falls_back_to_error_if_empty(agent):
             call_num[0] += 1
         return resp
 
-    agent._config["reasoning"]["max_steps_ollama"] = 3
+    agent._config["reasoning"]["max_steps_local"] = 3
     agent._config["reasoning"]["stall_detection"] = False
     with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", return_value="ok"):
+        with patch("local_agent.execute_tool", return_value="ok"):
             result = agent.run("do stuff")
 
     assert result["speak"] == "I ran out of steps. Please try again."
@@ -317,9 +317,9 @@ def test_finalize_tool_stops_before_step_limit(agent):
             }}]}
         return resp
 
-    agent._config["reasoning"]["max_steps_ollama"] = 10
+    agent._config["reasoning"]["max_steps_local"] = 10
     with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", return_value="arm64"):
+        with patch("local_agent.execute_tool", return_value="arm64"):
             result = agent.run("what chip do I have")
 
     assert "M1 Max" in result["speak"]
@@ -327,10 +327,10 @@ def test_finalize_tool_stops_before_step_limit(agent):
     assert len(result["steps"]) == 2
 
 
-# ── max_steps_ollama controls step limit ──────────────────────────────────────
+# ── max_steps_local controls step limit ──────────────────────────────────────
 
-def test_max_steps_ollama_controls_step_limit(agent):
-    """max_steps_ollama limits total tool calls regardless of intent_class."""
+def test_max_steps_local_controls_step_limit(agent):
+    """max_steps_local limits total tool calls regardless of intent_class."""
     call_count = [0]
     commands = [f"ls /dir{i}" for i in range(20)]
 
@@ -351,19 +351,19 @@ def test_max_steps_ollama_controls_step_limit(agent):
             }}]}
         return resp
 
-    agent._config["reasoning"]["max_steps_ollama"] = 3
+    agent._config["reasoning"]["max_steps_local"] = 3
     with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", return_value="ok"):
+        with patch("local_agent.execute_tool", return_value="ok"):
             agent.run("do something")
 
     # 3 tool calls + salvage = ≤ 5 total API calls
     assert call_count[0] <= 5
 
 
-def test_finalize_tool_is_in_ollama_tools_schema(agent):
+def test_finalize_tool_is_in_local_tools_schema(agent):
     """finalize tool should be present in the tools sent to Ollama."""
-    from ollama_agent import _OLLAMA_TOOLS
-    tool_names = [t["function"]["name"] for t in _OLLAMA_TOOLS]
+    from local_agent import _LOCAL_TOOLS
+    tool_names = [t["function"]["name"] for t in _LOCAL_TOOLS]
     assert "finalize" in tool_names
 
 
@@ -400,9 +400,9 @@ def test_near_duplicate_detection_stops_redundant_loop(agent):
             }}]}
         return resp
 
-    agent._config["reasoning"]["max_steps_ollama"] = 10
+    agent._config["reasoning"]["max_steps_local"] = 10
     with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", return_value="   100"):
+        with patch("local_agent.execute_tool", return_value="   100"):
             result = agent.run("how many python files")
 
     assert len(result["steps"]) < 10, "Should have stopped before using all 10 steps"
@@ -412,8 +412,8 @@ def test_near_duplicate_detection_stops_redundant_loop(agent):
 
 # ── coding agent wiring ───────────────────────────────────────────────────────
 
-def test_ollama_agent_has_no_coding_agent(agent):
-    """OllamaAgent must not expose a coding agent — coding tools are disabled."""
+def test_local_agent_has_no_coding_agent(agent):
+    """LocalAgent must not expose a coding agent — coding tools are disabled."""
     assert not hasattr(agent, "_coding")
 
 
@@ -424,17 +424,17 @@ def test_coding_ask_not_in_tool_schema(agent):
     assert "coding_ask" not in names
 
 
-def test_coding_tools_excluded_from_ollama_schema():
-    """coding_ask, coding_plan, coding_review must not appear in OllamaAgent's tool schema."""
-    from ollama_agent import _OLLAMA_TOOLS
-    tool_names = [t["function"]["name"] for t in _OLLAMA_TOOLS]
+def test_coding_tools_excluded_from_local_schema():
+    """coding_ask, coding_plan, coding_review must not appear in LocalAgent's tool schema."""
+    from local_agent import _LOCAL_TOOLS
+    tool_names = [t["function"]["name"] for t in _LOCAL_TOOLS]
     assert "coding_ask" not in tool_names
     assert "coding_plan" not in tool_names
     assert "coding_review" not in tool_names
 
 
 def test_http_client_uses_split_timeout(agent):
-    """OllamaAgent._http_client must use httpx.Timeout with short connect and long read."""
+    """LocalAgent._http_client must use httpx.Timeout with short connect and long read."""
     import httpx
     t = agent._http_client.timeout
     assert isinstance(t, httpx.Timeout), "Expected httpx.Timeout, not a flat number"
@@ -448,9 +448,9 @@ def test_timeout_seconds_config_sets_read_timeout(tmp_path, monkeypatch):
     monkeypatch.setattr("config.CONFIG_PATH", tmp_path / "config.json")
     import config
     cfg = config.load()
-    cfg["ollama"]["timeout_seconds"] = 120
+    cfg["local"]["timeout_seconds"] = 120
     from guardrails import Guardrails
-    a = OllamaAgent(config=cfg, guardrails=Guardrails(cfg))
+    a = LocalAgent(config=cfg, guardrails=Guardrails(cfg))
     assert a._http_client.timeout.read == 120.0
     assert a._http_client.timeout.connect <= 10.0
 
@@ -464,7 +464,7 @@ def test_step_callback_fired_for_all_steps_not_just_first(agent):
     ]
     step_events = []
     with patch("httpx.Client.post", side_effect=responses):
-        with patch("ollama_agent.execute_tool", return_value="ok"):
+        with patch("local_agent.execute_tool", return_value="ok"):
             agent.run("list dirs", step_callback=lambda e: step_events.append(e))
 
     step_type_events = [e for e in step_events if e["type"] == "step"]
@@ -482,7 +482,7 @@ def test_non_milestone_step_event_has_correct_fields(agent):
     ]
     step_events = []
     with patch("httpx.Client.post", side_effect=responses):
-        with patch("ollama_agent.execute_tool", return_value="ok"):
+        with patch("local_agent.execute_tool", return_value="ok"):
             agent.run("do stuff", step_callback=lambda e: step_events.append(e))
 
     non_milestones = [e for e in step_events if e.get("type") == "step" and not e["milestone"]]
@@ -494,7 +494,7 @@ def test_non_milestone_step_event_has_correct_fields(agent):
     assert e["milestone"] is False
 
 
-from ollama_agent import _stream_call
+from local_agent import _stream_call
 import json as _json_mod
 
 
@@ -618,7 +618,7 @@ def test_run_no_spurious_token_events_during_tool_call_round(agent):
         return _mock_stream(stop_lines)
 
     with patch.object(agent._http_client, "stream", side_effect=fake_stream):
-        with patch("ollama_agent.execute_tool", return_value="file list"):
+        with patch("local_agent.execute_tool", return_value="file list"):
             agent.run("list files", step_callback=lambda e: events.append(e))
 
     # Verify zero tokens emitted during the tool call round (before first step event)
@@ -655,7 +655,7 @@ def test_coding_agent_passed_as_none_to_execute_tool(agent):
         return "hi"
 
     with patch.object(agent._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", side_effect=capturing_execute_tool):
+        with patch("local_agent.execute_tool", side_effect=capturing_execute_tool):
             agent.run("echo hi")
 
     assert captured.get("coding") is None
@@ -663,9 +663,9 @@ def test_coding_agent_passed_as_none_to_execute_tool(agent):
 
 # ── MCP dynamic tool injection ────────────────────────────────────────────────
 
-def test_ollama_agent_includes_mcp_tools_in_tool_list():
+def test_local_agent_includes_mcp_tools_in_tool_list():
     from tools.mcp import MCPManager
-    a = OllamaAgent({"anthropic_api_key": "x", "brave_api_key": None}, Guardrails({}))
+    a = LocalAgent({"anthropic_api_key": "x", "brave_api_key": None}, Guardrails({}))
     mgr = MCPManager([{"name": "fs", "command": "npx", "args": [], "transport": "stdio"}])
     t = MagicMock()
     t.name = "read_file"
@@ -679,8 +679,8 @@ def test_ollama_agent_includes_mcp_tools_in_tool_list():
     assert "shell_run" in names
 
 
-def test_ollama_agent_build_tool_list_without_mcp_returns_only_builtins():
-    a = OllamaAgent({"anthropic_api_key": "x", "brave_api_key": None}, Guardrails({}))
+def test_local_agent_build_tool_list_without_mcp_returns_only_builtins():
+    a = LocalAgent({"anthropic_api_key": "x", "brave_api_key": None}, Guardrails({}))
     a._mcp_manager = None
     tools = a._build_tool_list()
     names = [tool["function"]["name"] for tool in tools]
@@ -688,12 +688,12 @@ def test_ollama_agent_build_tool_list_without_mcp_returns_only_builtins():
     assert not any(n.startswith("mcp__") for n in names)
 
 
-def test_ollama_agent_passes_mcp_manager_to_execute_tool():
-    """OllamaAgent must pass mcp_manager when dispatching MCP tool calls."""
+def test_local_agent_passes_mcp_manager_to_execute_tool():
+    """LocalAgent must pass mcp_manager when dispatching MCP tool calls."""
     from tools.mcp import MCPManager
     import tools._dispatch as dispatch_mod
 
-    a = OllamaAgent({"anthropic_api_key": "x", "brave_api_key": None}, Guardrails({"guardrails": {"mcp_tool": "auto_allow"}}))
+    a = LocalAgent({"anthropic_api_key": "x", "brave_api_key": None}, Guardrails({"guardrails": {"mcp_tool": "auto_allow"}}))
     mgr = MCPManager([{"name": "gh", "command": "x", "args": [], "transport": "stdio"}])
     t = MagicMock(); t.name = "list_issues"; t.description = ""; t.inputSchema = {"type": "object", "properties": {}}
     mgr._inject_tools("gh", [t])
@@ -713,7 +713,7 @@ def test_ollama_agent_passes_mcp_manager_to_execute_tool():
         return "[]"
 
     with patch.object(a._http_client, "post", side_effect=fake_post):
-        with patch("ollama_agent.execute_tool", side_effect=spy_execute):
+        with patch("local_agent.execute_tool", side_effect=spy_execute):
             a.run("list issues")
 
     assert captured.get("mcp_manager") is mgr
@@ -721,7 +721,7 @@ def test_ollama_agent_passes_mcp_manager_to_execute_tool():
 
 # ── Task 12: result_summary cap and wrap-up nudge ─────────────────────────────
 
-def test_ollama_result_summary_capped_at_200_chars(agent):
+def test_local_result_summary_capped_at_200_chars(agent):
     long_result = "y" * 300
     tool_resp = _tool_response("shell_run", {"command": "ls"})
     stop_resp = _stop_response("Done.")
@@ -734,14 +734,14 @@ def test_ollama_result_summary_capped_at_200_chars(agent):
     stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
     with patch.object(agent._http_client, "stream", stream_mock):
         with patch.object(agent._http_client, "post", side_effect=fake_post):
-            with patch("ollama_agent.execute_tool", return_value=long_result):
+            with patch("local_agent.execute_tool", return_value=long_result):
                 result = agent.run("list files")
 
     assert len(result["steps"][0]["result_summary"]) <= 200
 
 
-def test_ollama_wrap_up_nudge_injected_near_step_limit(agent):
-    agent._config["reasoning"]["max_steps_ollama"] = 5
+def test_local_wrap_up_nudge_injected_near_step_limit(agent):
+    agent._config["reasoning"]["max_steps_local"] = 5
     agent._config["reasoning"]["stall_detection"] = False  # avoid near-dup terminating early
     call_payloads = []
     # Alternate tool names to also avoid near-duplicate detection
@@ -767,7 +767,7 @@ def test_ollama_wrap_up_nudge_injected_near_step_limit(agent):
     stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
     with patch.object(agent._http_client, "stream", stream_mock):
         with patch.object(agent._http_client, "post", side_effect=fake_post):
-            with patch("ollama_agent.execute_tool", return_value="ok"):
+            with patch("local_agent.execute_tool", return_value="ok"):
                 agent.run("do stuff")
 
     assert len(call_payloads) >= 4
@@ -782,7 +782,7 @@ def test_ollama_wrap_up_nudge_injected_near_step_limit(agent):
 
 def test_planning_text_triggers_nudge_then_tool_call(agent):
     """Model returns 'Let me check...' first, then a real tool call after nudge."""
-    from ollama_agent import _is_planning_text
+    from local_agent import _is_planning_text
     assert _is_planning_text("Let me fetch the PR diff.")
     assert _is_planning_text("I'll check the CI failures for you.")
     assert not _is_planning_text("Done.")
@@ -806,7 +806,7 @@ def test_planning_text_triggers_nudge_then_tool_call(agent):
     stream_mock = MagicMock(side_effect=ValueError("force fallback"))
     with patch.object(agent._http_client, "stream", stream_mock):
         with patch.object(agent._http_client, "post", side_effect=fake_post):
-            with patch("ollama_agent.execute_tool", return_value="ok"):
+            with patch("local_agent.execute_tool", return_value="ok"):
                 result = agent.run("check CI", step_callback=fake_step)
 
     assert captured_nudge[0], "clear SSE event not emitted on nudge"
@@ -820,7 +820,7 @@ def test_planning_text_escalates_after_2_retries(agent):
     with patch.object(agent._http_client, "stream", stream_mock):
         with patch.object(agent._http_client, "post",
                           return_value=_stop_response("Let me check that for you.")):
-            from ollama_agent import EscalateToCloud
+            from local_agent import EscalateToCloud
             with pytest.raises(EscalateToCloud):
                 agent.run("check something")
 
@@ -840,7 +840,7 @@ def _make_streaming_finalize_response(answer: str, call_id: str = "call_fin"):
 
 def test_finalize_streams_answer_as_tokens(agent):
     """When Ollama calls finalize(answer=...), the answer must be streamed as token events."""
-    from ollama_agent import _stream_call
+    from local_agent import _stream_call
     answer = "Here is your code review: looks great overall."
     lines = _make_streaming_finalize_response(answer)
 
@@ -860,7 +860,7 @@ def test_finalize_streams_answer_as_tokens(agent):
 
 def test_finalize_emits_composing_step_before_tokens(agent):
     """A 'Composing response…' step event must fire before the first token of a finalize answer."""
-    from ollama_agent import _stream_call
+    from local_agent import _stream_call
     lines = _make_streaming_finalize_response("The answer is 42.")
 
     events = []
@@ -903,7 +903,7 @@ def test_planning_text_after_tool_calls_triggers_nudge(agent):
     stream_mock = MagicMock(side_effect=ValueError("force fallback"))
     with patch.object(agent._http_client, "stream", stream_mock):
         with patch.object(agent._http_client, "post", side_effect=fake_post):
-            with patch("ollama_agent.execute_tool", return_value='[{"number":39}]'):
+            with patch("local_agent.execute_tool", return_value='[{"number":39}]'):
                 result = agent.run("check PRs", step_callback=fake_step)
 
     assert nudge_fired[0], "clear SSE not emitted when planning text followed tool calls"
@@ -1099,7 +1099,7 @@ def test_nudge_dpo_capture_records_rejected_response(agent, tmp_path):
     stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
     with patch.object(agent._http_client, "stream", stream_mock):
         with patch.object(agent._http_client, "post", side_effect=fake_post):
-            with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
+            with patch("local_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
                 agent.run("organize my files", command_id="test-cmd-1")
 
     assert dpo_log.exists(), "DPO log file must be created on nudge"
@@ -1129,8 +1129,8 @@ def test_nudge_dpo_capture_records_chosen_when_retry_calls_tool(agent, tmp_path)
     stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
     with patch.object(agent._http_client, "stream", stream_mock):
         with patch.object(agent._http_client, "post", side_effect=fake_post):
-            with patch("ollama_agent.execute_tool", return_value="a.txt\nb.txt"):
-                with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
+            with patch("local_agent.execute_tool", return_value="a.txt\nb.txt"):
+                with patch("local_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
                     agent.run("list downloads", command_id="test-cmd-2")
 
     records = [json.loads(line) for line in dpo_log.read_text().splitlines()]
@@ -1153,7 +1153,7 @@ def test_nudge_dpo_no_capture_when_model_calls_tool_directly(agent, tmp_path):
     ]
     with patch("httpx.Client.post", side_effect=responses):
         with patch.object(agent._shell, "run", return_value={"exit_code": 0, "stdout": "a.txt", "stderr": ""}):
-            with patch("ollama_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
+            with patch("local_agent.DPO_LOG_PATH", str(dpo_log)):  # override conftest redirect
                 agent.run("list downloads")
 
     assert not dpo_log.exists(), "DPO log must not be created when no nudge fires"

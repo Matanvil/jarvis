@@ -3,7 +3,7 @@ import pytest
 from datetime import date
 from unittest.mock import MagicMock, patch
 from guardrails import Guardrails
-from ollama_agent import EscalateToCloud
+from local_agent import EscalateToCloud
 from router import Router
 from prompt_loader import PromptLoader
 
@@ -332,7 +332,7 @@ def test_local_first_uses_sonnet_for_complex_reasoning(local_first_router, mock_
 
 def test_local_first_stays_local_on_escalate(local_first_router, mock_ollama_agent, mock_sonnet_agent):
     """In local_first mode, OllamaAgent failure must return a graceful message — never call cloud."""
-    from ollama_agent import EscalateToCloud
+    from local_agent import EscalateToCloud
     local_first_router._classify = MagicMock(return_value={
         "can_handle_locally": True, "intent_class": "read_only", "reason": "simple"
     })

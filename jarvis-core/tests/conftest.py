@@ -7,7 +7,7 @@ import httpx
 @pytest.fixture(autouse=True)
 def no_dpo_writes(tmp_path):
     """Redirect DPO captures to a temp dir so tests never write to ~/.jarvis/logs/."""
-    with patch("ollama_agent.DPO_LOG_PATH", str(tmp_path / "dpo_data.jsonl")):
+    with patch("local_agent.DPO_LOG_PATH", str(tmp_path / "dpo_data.jsonl")):
         yield
 
 
