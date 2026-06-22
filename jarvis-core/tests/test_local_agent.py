@@ -937,6 +937,22 @@ def test_action_trace_response_triggers_nudge_and_retry(agent):
     assert not result["speak"].startswith("Actions:"), "action trace must not leak into final answer"
 
 
+def test_hallucinated_tool_json_triggers_nudge(agent):
+    """Model returning a raw tool-dispatch JSON blob must be treated as an action trace and nudged."""
+    blob = '{"runId":"abc","toolUses":{},"pending":[{"id":"x","input":{"command":"date"},"name":"shell_run"}]}'
+    responses = [
+        _stop_response(blob),
+        _stop_response("Today is Monday."),
+    ]
+    idx = [0]
+    stream_mock = MagicMock(side_effect=ValueError("force fallback to post"))
+    with patch.object(agent._http_client, "stream", stream_mock):
+        with patch.object(agent._http_client, "post", side_effect=lambda url, json=None, **kw: (idx.__setitem__(0, idx[0]+1) or responses[idx[0]-1])):
+            result = agent.run("what day is it?")
+    assert "Monday" in result["speak"]
+    assert not result["speak"].startswith("{"), "hallucinated JSON blob must not leak into final answer"
+
+
 def test_action_trace_does_not_enter_history_as_valid_answer(agent):
     """The 'Actions:' response should be appended to messages as assistant content
     (for context) but the next user message should be a nudge, not a finalize return."""

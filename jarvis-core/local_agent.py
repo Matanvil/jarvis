@@ -51,6 +51,8 @@ def _is_planning_text(text: str) -> bool:
 
 _ACTION_TRACE_RE = re.compile(r'^actions\s*:', re.IGNORECASE)
 _VO_PREFIX_RE = re.compile(r'^vo\s*:', re.IGNORECASE)
+# Matches hallucinated tool-dispatch JSON blobs (e.g. {"runId":..., "pending":[...]})
+_TOOL_JSON_RE = re.compile(r'^\{+\s*"(runId|toolUses|pending|tool_calls|function_call)"', re.IGNORECASE)
 
 
 def _is_action_trace(text: str) -> bool:
@@ -58,7 +60,11 @@ def _is_action_trace(text: str) -> bool:
     of calling finalize(). This leaks implementation details into the response and
     poisons conversational history — trigger a nudge to call finalize properly."""
     first_line = text.strip().split("\n")[0].strip()
-    return bool(_ACTION_TRACE_RE.match(first_line) or _VO_PREFIX_RE.match(first_line))
+    return bool(
+        _ACTION_TRACE_RE.match(first_line)
+        or _VO_PREFIX_RE.match(first_line)
+        or _TOOL_JSON_RE.match(first_line)
+    )
 
 
 # Appended to the base system prompt for local models that need extra guidance
