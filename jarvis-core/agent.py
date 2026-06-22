@@ -205,6 +205,52 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "index_codebase",
+        "description": (
+            "Index a code repository for semantic search. Call this once per project, then use "
+            "search_codebase to find relevant code. Re-run after major changes or if the index is stale. "
+            "Stores the index at ~/.jarvis/projects/<hash>/rag_store/. "
+            "Requires `ollama pull nomic-embed-text` to have been run once."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo_path": {
+                    "type": "string",
+                    "description": "Absolute path to the repository root (defaults to active project directory)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "search_codebase",
+        "description": (
+            "Semantically search an indexed codebase. Returns the most relevant code chunks with "
+            "file paths and line numbers. Must call index_codebase first if not yet indexed. "
+            "Better than file_read or search_content for conceptual questions like "
+            "'where is authentication handled' or 'how does caching work'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language description of what you're looking for",
+                },
+                "repo_path": {
+                    "type": "string",
+                    "description": "Repository root (defaults to active project directory)",
+                },
+                "n_results": {
+                    "type": "integer",
+                    "description": "Number of chunks to return (default: 5)",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "delegate_to_local",
         "description": (
             "Delegate a simple local sub-task to the local Ollama agent. "

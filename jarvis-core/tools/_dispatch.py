@@ -68,6 +68,8 @@ TOOL_TO_GUARDRAIL_CATEGORY = {
     "coding_ask": "read_files",
     "coding_plan": "read_files",
     "coding_review": "read_files",
+    "index_codebase": "read_files",
+    "search_codebase": "read_files",
 }
 
 
@@ -88,6 +90,7 @@ def execute_tool(
     local_agent=None,
     coding=None,
     mcp_manager=None,
+    rag=None,
 ) -> str:
     """Dispatch a tool call. Raises ApprovalRequiredError if guardrails block it."""
     if tool_name == "shell_run":
@@ -243,6 +246,33 @@ def execute_tool(
             if issue.get("recommendation"):
                 lines.append(f"  → {issue['recommendation']}")
         return "\n".join(lines)
+    elif tool_name == "index_codebase":
+        if rag is None:
+            return "error: RAG tool not available"
+        repo = tool_input.get("repo_path") or default_cwd
+        if not repo:
+            return "error: no repo_path specified and no active project directory"
+        r = rag.index(repo)
+        if r["error"]:
+            return f"error: {r['error']}"
+        return f"Indexed {r['indexed']} chunks from {repo}"
+    elif tool_name == "search_codebase":
+        if rag is None:
+            return "error: RAG tool not available"
+        repo = tool_input.get("repo_path") or default_cwd
+        if not repo:
+            return "error: no repo_path specified and no active project directory"
+        n = int(tool_input.get("n_results", 5))
+        r = rag.search(tool_input["query"], repo, n_results=n)
+        if r["error"]:
+            return f"error: {r['error']}"
+        lines = []
+        if r.get("stale"):
+            lines.append("[Note: index may be stale — consider running index_codebase to refresh]")
+        for chunk in r["chunks"]:
+            lines.append(f"\n### {chunk['file']}:{chunk['start_line']} ({chunk['chunk_type']}, score={chunk['score']})")
+            lines.append(chunk["text"])
+        return "\n".join(lines) if lines else "No relevant results found."
     if mcp_manager and mcp_manager.is_mcp_tool(tool_name):
         server, bare_tool = mcp_manager.parse_mcp_tool_name(tool_name)
         return mcp_manager.call_tool(server, bare_tool, tool_input)
