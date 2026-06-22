@@ -112,6 +112,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         installToApplicationsIfNeeded()
         checkFullDiskAccess()
         installEscKeyMonitor()
+        hudViewModel.expandToFullDesktop()
     }
 
     // MARK: - Alert Listener

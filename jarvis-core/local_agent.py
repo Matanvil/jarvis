@@ -51,6 +51,8 @@ def _is_planning_text(text: str) -> bool:
 
 _ACTION_TRACE_RE = re.compile(r'^actions\s*:', re.IGNORECASE)
 _VO_PREFIX_RE = re.compile(r'^vo\s*:', re.IGNORECASE)
+# Matches hallucinated tool-dispatch JSON blobs (e.g. {"runId":..., "pending":[...]})
+_TOOL_JSON_RE = re.compile(r'^\{+\s*"(runId|toolUses|pending|tool_calls|function_call)"', re.IGNORECASE)
 
 
 def _is_action_trace(text: str) -> bool:
@@ -58,7 +60,11 @@ def _is_action_trace(text: str) -> bool:
     of calling finalize(). This leaks implementation details into the response and
     poisons conversational history — trigger a nudge to call finalize properly."""
     first_line = text.strip().split("\n")[0].strip()
-    return bool(_ACTION_TRACE_RE.match(first_line) or _VO_PREFIX_RE.match(first_line))
+    return bool(
+        _ACTION_TRACE_RE.match(first_line)
+        or _VO_PREFIX_RE.match(first_line)
+        or _TOOL_JSON_RE.match(first_line)
+    )
 
 
 # Appended to the base system prompt for local models that need extra guidance
@@ -71,7 +77,9 @@ CRITICAL RULES FOR THIS MODEL:
 - NEVER respond with "Let me check...", "I'll do...", "First I need to..." or any planning sentence without ALSO calling a tool in the same response. If you need information, call the tool NOW — do not announce that you will.
 - To read a file always call file_read — NEVER use shell_run to cat/head/tail a file.
 - Be efficient: once you have enough information to answer, stop calling tools and respond. Do NOT keep gathering extra data beyond what the user asked for.
-- You have a limited number of tool calls. Use only what is needed — typically 1-3 calls. Do not explore tangents.
+- Simple lookups need 1-2 tool calls. Multi-step tasks may need more. Stop as soon as you have enough to answer — do NOT keep gathering extra data beyond what the user asked for.
+- Do NOT stop early if the user listed multiple actions — complete ALL of them before calling finalize().
+- If the user's request contains multiple actions (e.g. "merge PR, checkout main, pull"), treat each as a required step. Execute them in order. Do not call finalize() until every step is done.
 - NEVER call mkdir, file_write, or any filesystem-modifying command unless the user explicitly asked you to create or write something. Answering a question does not require creating directories or files.
 - NEVER write "Actions:" or echo tool call results as text in your response. After using a tool, call finalize() with a clean answer — do not describe what you did.
 """

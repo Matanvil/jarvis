@@ -272,8 +272,59 @@ private func extractBetween(_ s: String, after: String, before: String) -> Strin
     return String(sub[..<b.lowerBound])
 }
 
+private func extractFull(_ s: String, after: String, before: String) -> String? {
+    guard let a = s.range(of: after) else { return nil }
+    let sub = String(s[a.upperBound...])
+    guard let b = sub.range(of: before) else { return String(sub) }
+    return String(sub[..<b.lowerBound])
+}
+
+private struct LogStep {
+    let tool: String
+    let inputSummary: String
+    let resultSummary: String
+}
+
+private func parseSteps(_ raw: String) -> [LogStep] {
+    guard let stepsStart = raw.range(of: "'steps': [") else { return [] }
+    let stepsStr = String(raw[stepsStart.upperBound...])
+    var steps: [LogStep] = []
+    var search = stepsStr
+    while let toolRange = search.range(of: "'tool': '") {
+        search = String(search[toolRange.upperBound...])
+        guard let toolEnd = search.range(of: "'") else { break }
+        let tool = String(search[..<toolEnd.lowerBound])
+        search = String(search[toolEnd.upperBound...])
+
+        // input_summary can be single or double quoted
+        let inputSummary: String
+        if let r = search.range(of: "'input_summary': \"") {
+            search = String(search[r.upperBound...])
+            inputSummary = String((search.range(of: "\", '").map { String(search[..<$0.lowerBound]) } ?? String(search.prefix(120))).prefix(120))
+        } else if let r = search.range(of: "'input_summary': '") {
+            search = String(search[r.upperBound...])
+            inputSummary = String((search.range(of: "', '").map { String(search[..<$0.lowerBound]) } ?? String(search.prefix(120))).prefix(120))
+        } else {
+            inputSummary = ""
+        }
+
+        let resultSummary: String
+        if let r = search.range(of: "'result_summary': '") {
+            search = String(search[r.upperBound...])
+            resultSummary = String((search.range(of: "', '").map { String(search[..<$0.lowerBound]) } ?? String(search.prefix(200))).prefix(200))
+        } else {
+            resultSummary = ""
+        }
+
+        steps.append(LogStep(tool: tool, inputSummary: inputSummary, resultSummary: resultSummary))
+        if steps.count > 20 { break }
+    }
+    return steps
+}
+
 struct CommandLogRow: View {
     let raw: String
+    @State private var isExpanded = false
 
     private var ts: String {
         extractBetween(raw, after: "", before: " INFO") ?? ""
@@ -304,6 +355,12 @@ struct CommandLogRow: View {
               !v.isEmpty else { return nil }
         return v
     }
+    private var displayText: String? {
+        guard let v = extractFull(raw, after: "'display': '", before: "', 'steps': ["),
+              !v.isEmpty else { return nil }
+        return v
+    }
+    private var steps: [LogStep] { parseSteps(raw) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -316,6 +373,9 @@ struct CommandLogRow: View {
                     if let ms = durationMs { pill("\(ms)ms", color: .white.opacity(0.12)) }
                     if let t = tokS        { pill("\(t) tok/s", color: logAccent.opacity(0.3)) }
                     if let i = intent      { pill(i, color: Color.purple.opacity(0.35)) }
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(logTextDim)
                 }
             }
             Text(cmd)
@@ -331,8 +391,72 @@ struct CommandLogRow: View {
                 Text(s)
                     .font(.system(size: 11))
                     .foregroundColor(logTextSecond)
-                    .lineLimit(2)
+                    .lineLimit(isExpanded ? nil : 2)
                     .textSelection(.enabled)
+            }
+
+            if isExpanded {
+                Divider().background(logRowBorder).padding(.vertical, 4)
+
+                if !steps.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("STEPS")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(logTextDim)
+                        ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text("\(i + 1)")
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundColor(logTextDim)
+                                    Text(step.tool)
+                                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(logAccent)
+                                }
+                                if !step.inputSummary.isEmpty {
+                                    Text(step.inputSummary)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(logTextDim)
+                                        .textSelection(.enabled)
+                                }
+                                if !step.resultSummary.isEmpty {
+                                    Text(step.resultSummary)
+                                        .font(.system(size: 10))
+                                        .foregroundColor(logTextSecond)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.white.opacity(0.03))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+                }
+
+                if let display = displayText {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("RESPONSE")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(logTextDim)
+                        Text(display)
+                            .font(.system(size: 11))
+                            .foregroundColor(logTextSecond)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("RAW")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundColor(logTextDim)
+                    Text(raw)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(logTextDim)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
         .padding(12)
@@ -340,6 +464,7 @@ struct CommandLogRow: View {
         .background(logRowBg)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(logRowBorder, lineWidth: 1))
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }
     }
 
     private func pill(_ text: String, color: Color) -> some View {
