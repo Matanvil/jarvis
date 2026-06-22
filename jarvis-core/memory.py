@@ -70,7 +70,30 @@ class ProjectMemory:
             parts.append(f"Dev: {data['dev_command']}")
         if data.get("notes"):
             parts.append(f"Notes: {data['notes']}")
+        if data.get("rag_indexed_at"):
+            stale_marker = " (stale — run index_codebase to refresh)" if self.rag_is_stale(cwd) else ""
+            parts.append(f"RAG indexed: {data['rag_indexed_at'][:10]}{stale_marker}")
         return " | ".join(parts)
+
+    def rag_project_dir(self, cwd: str) -> "Path":
+        return self._project_dir(cwd)
+
+    def update_rag_index(self, cwd: str, repo_path: str) -> None:
+        from datetime import datetime, timezone
+        self.update(cwd, "rag_indexed_at", datetime.now(timezone.utc).isoformat())
+        self.update(cwd, "rag_repo_path", repo_path)
+
+    def rag_is_stale(self, cwd: str, max_age_days: int = 7) -> bool:
+        data = self.load(cwd)
+        ts = data.get("rag_indexed_at")
+        if not ts:
+            return True
+        from datetime import datetime, timezone
+        try:
+            indexed = datetime.fromisoformat(ts)
+            return (datetime.now(timezone.utc) - indexed).days >= max_age_days
+        except Exception:
+            return True
 
     def discover(self, cwd: str, ollama_host: str, ollama_model: str) -> dict:
         """Auto-discover project metadata by asking Ollama to analyze config files."""

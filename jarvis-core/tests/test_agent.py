@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from agent import Agent, claude_code_available, _step_label
+from agent import Agent, TOOL_DEFINITIONS, claude_code_available, _step_label
 from guardrails import Guardrails, Decision
 from tools._dispatch import execute_tool, format_response
 
@@ -20,6 +20,23 @@ def make_agent(model: str = "claude-haiku-4-5-20251001"):
     }
     guardrails = Guardrails(config)
     return Agent(config=config, guardrails=guardrails, model=model)
+
+
+def test_agent_has_rag_attribute():
+    agent = make_agent()
+    from tools.rag import RAGTool
+    assert hasattr(agent, "_rag")
+    assert isinstance(agent._rag, RAGTool)
+
+
+def test_tool_definitions_include_index_codebase():
+    names = {t["name"] for t in TOOL_DEFINITIONS}
+    assert "index_codebase" in names
+
+
+def test_tool_definitions_include_search_codebase():
+    names = {t["name"] for t in TOOL_DEFINITIONS}
+    assert "search_codebase" in names
 
 
 def test_agent_uses_specified_model():

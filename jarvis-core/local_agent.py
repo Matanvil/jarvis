@@ -13,6 +13,8 @@ from tools.macos import MacOSTool
 from tools._dispatch import execute_tool, format_response
 from agent import TOOL_DEFINITIONS, _BASE_SYSTEM_PROMPT, _step_label
 from tools._errors import ApprovalRequiredError
+from tools.rag import RAGTool
+from memory import ProjectMemory
 
 DPO_LOG_PATH = os.path.expanduser("~/.jarvis/logs/dpo_data.jsonl")
 
@@ -27,7 +29,8 @@ def _flush_dpo(record: dict) -> None:
         pass
 
 _PLANNING_RE = re.compile(
-    r"^(now\s+|ok(ay)?[,.]?\s+|sure[,.]?\s+|well[,.]?\s+|alright[,.]?\s+|great[,.]?\s+|perfect[,.]?\s+)?"
+    r"^(vo\s*:\s*|now\s+|ok(ay)?[,.]?\s+|sure[,.]?\s+|well[,.]?\s+|alright[,.]?\s+|"
+    r"great[,.]?\s+|perfect[,.]?\s+|actually[,.]?\s+)?"
     r"(let me\b|i('ll| will)\b|i'm going to\b|i need to\b|i'll start\b|"
     r"i'll check\b|i'll look\b|i'll fetch\b|i'll get\b|i'll find\b|i'll run\b|i'll read\b|"
     r"to do this\b|here's what i|first[,\s]i)",
@@ -41,11 +44,13 @@ def _is_planning_text(text: str) -> bool:
     Empty text is also treated as non-final — the model gave up silently."""
     if not text:
         return True
-    first_line = text.strip().split("\n")[0].strip()
-    return bool(_PLANNING_RE.match(first_line))
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    # Check first line (intent at start) or last line (intent at end, e.g. "...Let me start that for you.")
+    return bool(_PLANNING_RE.match(lines[0]) or _PLANNING_RE.match(lines[-1]))
 
 
 _ACTION_TRACE_RE = re.compile(r'^actions\s*:', re.IGNORECASE)
+_VO_PREFIX_RE = re.compile(r'^vo\s*:', re.IGNORECASE)
 
 
 def _is_action_trace(text: str) -> bool:
@@ -53,7 +58,7 @@ def _is_action_trace(text: str) -> bool:
     of calling finalize(). This leaks implementation details into the response and
     poisons conversational history — trigger a nudge to call finalize properly."""
     first_line = text.strip().split("\n")[0].strip()
-    return bool(_ACTION_TRACE_RE.match(first_line))
+    return bool(_ACTION_TRACE_RE.match(first_line) or _VO_PREFIX_RE.match(first_line))
 
 
 # Appended to the base system prompt for local models that need extra guidance
@@ -354,6 +359,8 @@ class LocalAgent:
         self._code = CodeTool()
         self._macos = MacOSTool()
         self._mcp_manager = mcp_manager
+        _mem = ProjectMemory()
+        self._rag = RAGTool(memory=_mem, ollama_host=config.get("local", {}).get("host", "http://localhost:11434"))
         # Shared client reuses TCP connection to the persistent Ollama process.
         # Note: if timeout is updated via POST /config after construction, the
         # existing client will not pick up the new value — acceptable for now.
@@ -693,7 +700,7 @@ class LocalAgent:
             if step_callback is not None:
                 step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
             try:
-                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=None, mcp_manager=self._mcp_manager)
+                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=None, mcp_manager=self._mcp_manager, rag=self._rag)
                 step["result_summary"] = result[:200] if isinstance(result, str) else str(result)[:200]
                 state.tool_calls_made.append(name)
                 state.no_tool_retries = 0  # successful tool call resets retry budget

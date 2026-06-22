@@ -86,3 +86,55 @@ def test_discover_returns_empty_on_ollama_failure(mem, tmp_path):
     with patch("httpx.Client.post", side_effect=httpx.ConnectError("refused")):
         result = mem.discover(str(project_dir), ollama_host="http://localhost:11434", ollama_model="mistral:latest")
     assert result == {}
+
+
+def test_update_rag_index_saves_timestamp_and_path(mem):
+    mem.update_rag_index("/my/repo", "/my/repo")
+    data = mem.load("/my/repo")
+    assert "rag_indexed_at" in data
+    assert data["rag_repo_path"] == "/my/repo"
+    from datetime import datetime
+    datetime.fromisoformat(data["rag_indexed_at"])  # should not raise
+
+
+def test_rag_is_stale_returns_true_when_never_indexed(mem):
+    assert mem.rag_is_stale("/never/indexed") is True
+
+
+def test_rag_is_stale_returns_false_when_just_indexed(mem):
+    mem.update_rag_index("/my/repo", "/my/repo")
+    assert mem.rag_is_stale("/my/repo") is False
+
+
+def test_rag_is_stale_returns_true_when_old(mem):
+    from datetime import datetime, timezone, timedelta
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+    mem.save("/old/repo", {"rag_indexed_at": old_ts})
+    assert mem.rag_is_stale("/old/repo", max_age_days=7) is True
+
+
+def test_rag_project_dir_matches_project_dir(mem):
+    import hashlib
+    cwd = "/my/project"
+    key = hashlib.md5(cwd.encode()).hexdigest()
+    expected = mem._base / key
+    assert mem.rag_project_dir(cwd) == expected
+
+
+def test_format_context_includes_rag_indexed_date(mem):
+    mem.save("/my/project", {
+        "project_type": "python",
+        "rag_indexed_at": "2026-06-01T10:00:00+00:00",
+        "rag_repo_path": "/my/project",
+    })
+    ctx = mem.format_context("/my/project")
+    assert "RAG indexed" in ctx
+    assert "2026-06-01" in ctx
+
+
+def test_format_context_marks_stale_rag(mem):
+    from datetime import datetime, timezone, timedelta
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+    mem.save("/my/project", {"rag_indexed_at": old_ts})
+    ctx = mem.format_context("/my/project")
+    assert "stale" in ctx

@@ -12,6 +12,8 @@ from tools.macos import MacOSTool
 from tools.coding_agent import CodingAgentTool
 from tools._dispatch import execute_tool, format_response, _claude_code_available as claude_code_available
 from tools._errors import ApprovalRequiredError
+from tools.rag import RAGTool
+from memory import ProjectMemory
 
 _BASE_SYSTEM_PROMPT = """You are Jarvis, a macOS AI assistant and coding partner. You help the user by executing tasks directly — think of yourself as a voice-operated Claude Code.
 
@@ -202,6 +204,55 @@ TOOL_DEFINITIONS = [
                 "path": {"type": "string", "description": "Absolute or ~ path to the directory"},
             },
             "required": ["path"],
+        },
+    },
+    {
+        "name": "index_codebase",
+        "description": (
+            "Index a code repository for semantic search. Skips automatically if the index is already "
+            "up to date — safe to call without checking first. Use force=true only to rebuild after "
+            "major code changes. Requires `ollama pull nomic-embed-text` once."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo_path": {
+                    "type": "string",
+                    "description": "Absolute path to the repository root (defaults to active project directory)",
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "Force re-index even if the index is already up to date (default: false)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "search_codebase",
+        "description": (
+            "Semantically search an indexed codebase. Returns the most relevant code chunks with "
+            "file paths and line numbers. Must call index_codebase first if not yet indexed. "
+            "Better than file_read or search_content for conceptual questions like "
+            "'where is authentication handled' or 'how does caching work'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language description of what you're looking for",
+                },
+                "repo_path": {
+                    "type": "string",
+                    "description": "Repository root (defaults to active project directory)",
+                },
+                "n_results": {
+                    "type": "integer",
+                    "description": "Number of chunks to return (default: 5)",
+                },
+            },
+            "required": ["query"],
         },
     },
     {
@@ -473,6 +524,8 @@ class Agent:
         self._logger = logging.getLogger("jarvis.commands")
         self._local_agent = local_agent
         self._mcp_manager = mcp_manager
+        _mem = ProjectMemory()
+        self._rag = RAGTool(memory=_mem, ollama_host="http://localhost:11434")
 
     def _build_tool_list(self) -> list[dict]:
         """Return TOOL_DEFINITIONS plus any MCP tools registered with the manager."""
@@ -649,6 +702,7 @@ class Agent:
                         local_agent=self._local_agent,
                         coding=self._coding,
                         mcp_manager=self._mcp_manager,
+                        rag=self._rag,
                     )
                 step["result_summary"] = result[:200] if isinstance(result, str) else str(result)[:200]
                 state.tool_calls_made.append(block.name)
