@@ -357,6 +357,7 @@ struct TurnRowView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .textSelection(.enabled)
     }
 
     private func stepLabel(_ step: Step) -> String {
