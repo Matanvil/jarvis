@@ -22,6 +22,13 @@ def make_agent(model: str = "claude-haiku-4-5-20251001"):
     return Agent(config=config, guardrails=guardrails, model=model)
 
 
+def test_agent_has_rag_attribute():
+    agent = make_agent()
+    from tools.rag import RAGTool
+    assert hasattr(agent, "_rag")
+    assert isinstance(agent._rag, RAGTool)
+
+
 def test_tool_definitions_include_index_codebase():
     names = {t["name"] for t in TOOL_DEFINITIONS}
     assert "index_codebase" in names

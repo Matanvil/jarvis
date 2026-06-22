@@ -417,6 +417,12 @@ def test_local_agent_has_no_coding_agent(agent):
     assert not hasattr(agent, "_coding")
 
 
+def test_local_agent_has_rag_attribute(agent):
+    from tools.rag import RAGTool
+    assert hasattr(agent, "_rag")
+    assert isinstance(agent._rag, RAGTool)
+
+
 def test_coding_ask_not_in_tool_schema(agent):
     """coding_ask must not be offered to the model — it's disabled."""
     tools = agent._build_tool_list()

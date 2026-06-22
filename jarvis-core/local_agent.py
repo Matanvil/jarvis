@@ -13,6 +13,8 @@ from tools.macos import MacOSTool
 from tools._dispatch import execute_tool, format_response
 from agent import TOOL_DEFINITIONS, _BASE_SYSTEM_PROMPT, _step_label
 from tools._errors import ApprovalRequiredError
+from tools.rag import RAGTool
+from memory import ProjectMemory
 
 DPO_LOG_PATH = os.path.expanduser("~/.jarvis/logs/dpo_data.jsonl")
 
@@ -354,6 +356,8 @@ class LocalAgent:
         self._code = CodeTool()
         self._macos = MacOSTool()
         self._mcp_manager = mcp_manager
+        _mem = ProjectMemory()
+        self._rag = RAGTool(memory=_mem, ollama_host=config.get("local", {}).get("host", "http://localhost:11434"))
         # Shared client reuses TCP connection to the persistent Ollama process.
         # Note: if timeout is updated via POST /config after construction, the
         # existing client will not pick up the new value — acceptable for now.
@@ -693,7 +697,7 @@ class LocalAgent:
             if step_callback is not None:
                 step_callback({"type": "step", "label": _step_label(name), "tool": name, "milestone": step["milestone"]})
             try:
-                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=None, mcp_manager=self._mcp_manager)
+                result = execute_tool(name, args, self._shell, self._web, self._code, self._macos, self._guardrails, default_cwd=state.cwd, coding=None, mcp_manager=self._mcp_manager, rag=self._rag)
                 step["result_summary"] = result[:200] if isinstance(result, str) else str(result)[:200]
                 state.tool_calls_made.append(name)
                 state.no_tool_retries = 0  # successful tool call resets retry budget

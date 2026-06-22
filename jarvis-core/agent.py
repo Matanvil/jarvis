@@ -12,6 +12,8 @@ from tools.macos import MacOSTool
 from tools.coding_agent import CodingAgentTool
 from tools._dispatch import execute_tool, format_response, _claude_code_available as claude_code_available
 from tools._errors import ApprovalRequiredError
+from tools.rag import RAGTool
+from memory import ProjectMemory
 
 _BASE_SYSTEM_PROMPT = """You are Jarvis, a macOS AI assistant and coding partner. You help the user by executing tasks directly — think of yourself as a voice-operated Claude Code.
 
@@ -519,6 +521,8 @@ class Agent:
         self._logger = logging.getLogger("jarvis.commands")
         self._local_agent = local_agent
         self._mcp_manager = mcp_manager
+        _mem = ProjectMemory()
+        self._rag = RAGTool(memory=_mem, ollama_host="http://localhost:11434")
 
     def _build_tool_list(self) -> list[dict]:
         """Return TOOL_DEFINITIONS plus any MCP tools registered with the manager."""
@@ -695,6 +699,7 @@ class Agent:
                         local_agent=self._local_agent,
                         coding=self._coding,
                         mcp_manager=self._mcp_manager,
+                        rag=self._rag,
                     )
                 step["result_summary"] = result[:200] if isinstance(result, str) else str(result)[:200]
                 state.tool_calls_made.append(block.name)
