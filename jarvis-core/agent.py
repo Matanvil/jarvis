@@ -209,10 +209,9 @@ TOOL_DEFINITIONS = [
     {
         "name": "index_codebase",
         "description": (
-            "Index a code repository for semantic search. Call this once per project, then use "
-            "search_codebase to find relevant code. Re-run after major changes or if the index is stale. "
-            "Stores the index at ~/.jarvis/projects/<hash>/rag_store/. "
-            "Requires `ollama pull nomic-embed-text` to have been run once."
+            "Index a code repository for semantic search. Skips automatically if the index is already "
+            "up to date — safe to call without checking first. Use force=true only to rebuild after "
+            "major code changes. Requires `ollama pull nomic-embed-text` once."
         ),
         "input_schema": {
             "type": "object",
@@ -220,6 +219,10 @@ TOOL_DEFINITIONS = [
                 "repo_path": {
                     "type": "string",
                     "description": "Absolute path to the repository root (defaults to active project directory)",
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "Force re-index even if the index is already up to date (default: false)",
                 },
             },
             "required": [],

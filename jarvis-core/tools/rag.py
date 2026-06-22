@@ -11,6 +11,17 @@ class RAGTool:
     def _chroma_path(self, repo_path: str) -> str:
         return str(self._memory.rag_project_dir(repo_path) / "rag_store")
 
+    def status(self, repo_path: str) -> dict:
+        """Return current index state without modifying anything."""
+        try:
+            store = VectorStore(chroma_path=self._chroma_path(repo_path))
+            count = store.count()
+            stale = self._memory.rag_is_stale(repo_path)
+            data = self._memory.load(repo_path)
+            return {"count": count, "stale": stale, "indexed_at": data.get("rag_indexed_at", "never"), "error": None}
+        except Exception as e:
+            return {"count": 0, "stale": True, "indexed_at": "never", "error": str(e)}
+
     def index(self, repo_path: str) -> dict:
         try:
             embedder = OllamaEmbedder(base_url=self._ollama_host)

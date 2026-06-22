@@ -252,6 +252,15 @@ def execute_tool(
         repo = tool_input.get("repo_path") or default_cwd
         if not repo:
             return "error: no repo_path specified and no active project directory"
+        force = bool(tool_input.get("force", False))
+        if not force:
+            existing = rag.status(repo)
+            if existing["count"] > 0 and not existing["stale"]:
+                return (
+                    f"Index already up to date: {existing['count']} chunks indexed "
+                    f"(last indexed: {existing['indexed_at']}). "
+                    f"Use search_codebase to query it, or pass force=true to re-index."
+                )
         r = rag.index(repo)
         if r["error"]:
             return f"error: {r['error']}"
