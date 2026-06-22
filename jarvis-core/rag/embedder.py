@@ -1,7 +1,7 @@
 import httpx
 from typing import List
 
-MAX_EMBED_CHARS = 6000  # nomic-embed-text context limit ~8192 tokens; 6000 chars is safe
+MAX_EMBED_CHARS = 4000  # nomic-bert context_length=2048 tokens; dense code/JSON burns ~2 chars/token
 
 
 class EmbedderError(Exception):

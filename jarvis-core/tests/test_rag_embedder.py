@@ -26,7 +26,7 @@ def test_embed_truncates_long_text():
     with patch("httpx.Client.post", side_effect=fake_post):
         embedder = OllamaEmbedder()
         embedder.embed("x" * 10000)
-    assert len(captured["prompt"]) == 6000
+    assert len(captured["prompt"]) == 4000
 
 
 def test_embed_raises_on_missing_embedding_key():

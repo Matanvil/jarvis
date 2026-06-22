@@ -71,7 +71,7 @@ def test_defaults_include_ollama_block(tmp_path, monkeypatch):
     assert "local" in cfg
     assert cfg["local"]["host"] == "http://localhost:11434"
     assert cfg["local"]["model"] == "qwen3.6:35b-a3b"
-    assert cfg["local"]["executor_host"] == "http://127.0.0.1:8093"
+    assert cfg["local"]["executor_host"] == "http://localhost:8000"
     assert cfg["local"]["executor_model"] == "mlx-community/Qwen3.6-35B-A3B-4bit"
     assert cfg["local"]["executor_rapid_mlx"] is True
     assert cfg["local"]["classifier_model"] == "mlx-community/Qwen3-4B-Instruct-2507-4bit"

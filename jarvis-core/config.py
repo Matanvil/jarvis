@@ -30,7 +30,7 @@ DEFAULTS = {
         "model": "qwen3.6:35b-a3b",
         "routing_mode": "automatic",   # automatic | local | cloud
         "timeout_seconds": 300,
-        "executor_host": "http://127.0.0.1:8093",
+        "executor_host": "http://localhost:8000",
         "executor_model": "mlx-community/Qwen3.6-35B-A3B-4bit",
         "executor_rapid_mlx": True,
         "executor_chat_template_kwargs": {"enable_thinking": False},

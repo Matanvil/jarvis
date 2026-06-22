@@ -43,8 +43,9 @@ def _is_planning_text(text: str) -> bool:
     Empty text is also treated as non-final — the model gave up silently."""
     if not text:
         return True
-    first_line = text.strip().split("\n")[0].strip()
-    return bool(_PLANNING_RE.match(first_line))
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    # Check first line (intent at start) or last line (intent at end, e.g. "...Let me start that for you.")
+    return bool(_PLANNING_RE.match(lines[0]) or _PLANNING_RE.match(lines[-1]))
 
 
 _ACTION_TRACE_RE = re.compile(r'^actions\s*:', re.IGNORECASE)
