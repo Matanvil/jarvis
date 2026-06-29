@@ -669,7 +669,8 @@ def test_coding_agent_passed_as_none_to_execute_tool(agent):
 
 # ── MCP dynamic tool injection ────────────────────────────────────────────────
 
-def test_local_agent_includes_mcp_tools_in_tool_list():
+def test_local_agent_excludes_mcp_tools_from_tool_list():
+    """MCP tools are intentionally excluded to prevent context overflow on local model."""
     from tools.mcp import MCPManager
     a = LocalAgent({"anthropic_api_key": "x", "brave_api_key": None}, Guardrails({}))
     mgr = MCPManager([{"name": "fs", "command": "npx", "args": [], "transport": "stdio"}])
@@ -681,7 +682,7 @@ def test_local_agent_includes_mcp_tools_in_tool_list():
     a._mcp_manager = mgr
     tools = a._build_tool_list()
     names = [tool["function"]["name"] for tool in tools]
-    assert "mcp__fs__read_file" in names
+    assert "mcp__fs__read_file" not in names
     assert "shell_run" in names
 
 

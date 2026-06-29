@@ -377,12 +377,12 @@ class LocalAgent:
         )
 
     def _build_tool_list(self) -> list[dict]:
-        """Return local-format tool list with built-ins plus any MCP tools."""
-        base = list(_LOCAL_TOOLS)
-        if self._mcp_manager is not None:
-            mcp_schemas = self._mcp_manager.tool_schemas()
-            base = base + _anthropic_to_local_tools(mcp_schemas)
-        return base
+        """Return local-format tool list with built-ins only.
+
+        MCP tools (e.g. GitHub) are excluded — their schemas can be large enough
+        to overflow the local model's context window, and cloud escalation handles
+        tasks that require them."""
+        return list(_LOCAL_TOOLS)
 
     def close(self) -> None:
         self._http_client.close()
