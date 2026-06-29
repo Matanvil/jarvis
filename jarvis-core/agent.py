@@ -256,6 +256,24 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "list_plans",
+        "description": (
+            "List saved plans for the current project. Returns filenames and titles of all plans "
+            "stored under ~/.jarvis/projects/<project>/plans/. Use this when the user asks to "
+            "see, load, or resume a previously saved plan."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cwd": {
+                    "type": "string",
+                    "description": "Project directory (defaults to active project directory)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "delegate_to_local",
         "description": (
             "Delegate a simple local sub-task to the local Ollama agent. "
@@ -453,6 +471,7 @@ _STEP_LABELS: dict[str, str] = {
     "web_fetch": "Fetching page",
     "find_files": "Searching files",
     "list_dir": "Listing directory",
+    "list_plans": "Listing saved plans",
     "run_code": "Running code",
     "delegate_to_local": "Thinking locally",
     "delegate_to_claude_code": "Delegating to Claude Code",

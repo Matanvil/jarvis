@@ -1180,3 +1180,76 @@ def test_nudge_dpo_no_capture_when_model_calls_tool_directly(agent, tmp_path):
                 agent.run("list downloads")
 
     assert not dpo_log.exists(), "DPO log must not be created when no nudge fires"
+
+
+# ── Plan/execute skill detection ──────────────────────────────────────────────
+
+def test_detect_skill_returns_plan_for_prepare_intent():
+    from local_agent import _detect_skill
+    assert _detect_skill("prepare", "organise the folder", None) == "plan"
+
+
+def test_detect_skill_returns_none_for_read_only():
+    from local_agent import _detect_skill
+    assert _detect_skill("read_only", "what time is it", None) is None
+
+
+def test_detect_skill_returns_execute_when_proceed_follows_numbered_plan():
+    from local_agent import _detect_skill
+    history = [
+        {"role": "user", "content": "plan the reorganisation"},
+        {"role": "assistant", "content": (
+            "Here is the plan:\n"
+            "1. Create core/ directory\n"
+            "2. Move guardrails.py to core/\n"
+            "3. Move scheduler.py to core/\n"
+            "4. Verify with list_dir\n"
+        )},
+    ]
+    assert _detect_skill("read_only", "proceed please", history) == "execute"
+
+
+def test_detect_skill_returns_none_when_proceed_but_no_plan_in_history():
+    from local_agent import _detect_skill
+    history = [
+        {"role": "user", "content": "what time is it"},
+        {"role": "assistant", "content": "It's 8 PM."},
+    ]
+    assert _detect_skill("read_only", "yes", history) is None
+
+
+def test_detect_skill_execute_requires_at_least_3_numbered_steps():
+    from local_agent import _detect_skill
+    history = [
+        {"role": "assistant", "content": "Steps:\n1. Do A\n2. Do B\n"},
+    ]
+    assert _detect_skill("read_only", "proceed", history) is None
+
+
+# ── list_plans tool ───────────────────────────────────────────────────────────
+
+def test_list_plans_returns_empty_for_unknown_project(tmp_path, monkeypatch):
+    import tools.shell as sh_mod
+    monkeypatch.setattr(sh_mod.Path, "home", lambda: tmp_path)
+    tool = sh_mod.ShellTool()
+    result = tool.list_plans("/nonexistent/project")
+    assert result["plans"] == []
+    assert result["error"] is None
+
+
+def test_list_plans_returns_sorted_plans(tmp_path, monkeypatch):
+    import hashlib, tools.shell as sh_mod
+    monkeypatch.setattr(sh_mod.Path, "home", lambda: tmp_path)
+    cwd = "/my/project"
+    h = hashlib.md5(cwd.encode()).hexdigest()
+    plans_dir = tmp_path / ".jarvis" / "projects" / h / "plans"
+    plans_dir.mkdir(parents=True)
+    (plans_dir / "2026-06-29-first.md").write_text("# Plan: First plan\n## Steps\n1. do it")
+    (plans_dir / "2026-06-30-second.md").write_text("# Plan: Second plan\n## Steps\n1. do it")
+
+    tool = sh_mod.ShellTool()
+    result = tool.list_plans(cwd)
+    assert result["error"] is None
+    assert len(result["plans"]) == 2
+    assert result["plans"][0]["filename"] == "2026-06-30-second.md"
+    assert result["plans"][0]["title"] == "Plan: Second plan"

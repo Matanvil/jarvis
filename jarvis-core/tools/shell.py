@@ -166,3 +166,23 @@ class ShellTool:
             }
         except Exception as e:
             return {"entries": [], "error": str(e)}
+
+    def list_plans(self, cwd: str) -> dict:
+        import hashlib
+        h = hashlib.md5(cwd.encode()).hexdigest()
+        plans_dir = Path.home() / ".jarvis" / "projects" / h / "plans"
+        if not plans_dir.is_dir():
+            return {"plans": [], "plans_dir": str(plans_dir), "error": None}
+        files = sorted(
+            [f for f in plans_dir.iterdir() if f.suffix == ".md"],
+            key=lambda f: f.name,
+            reverse=True,
+        )
+        plans = []
+        for fpath in files:
+            try:
+                first_line = fpath.read_text().splitlines()[0].lstrip("# ").strip()
+            except Exception:
+                first_line = ""
+            plans.append({"filename": fpath.name, "path": str(fpath), "title": first_line})
+        return {"plans": plans, "plans_dir": str(plans_dir), "error": None}

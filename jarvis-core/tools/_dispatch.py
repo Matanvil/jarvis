@@ -70,6 +70,7 @@ TOOL_TO_GUARDRAIL_CATEGORY = {
     "coding_review": "read_files",
     "index_codebase": "read_files",
     "search_codebase": "read_files",
+    "list_plans": "read_files",
 }
 
 
@@ -174,6 +175,15 @@ def execute_tool(
         if not entries:
             return "Directory is empty."
         lines = [f"{'[dir] ' if e['is_dir'] else '[file]'} {e['name']}" for e in sorted(entries, key=lambda e: (not e["is_dir"], e["name"]))]
+        return "\n".join(lines)
+    elif tool_name == "list_plans":
+        r = shell.list_plans(tool_input.get("cwd") or cwd or "~")
+        if r["error"]:
+            return f"error={r['error']}"
+        if not r["plans"]:
+            return f"No saved plans for this project. Plans directory: {r['plans_dir']}"
+        lines = [f"Plans directory: {r['plans_dir']}", ""]
+        lines += [f"• {p['filename']}: {p['title']}" for p in r["plans"]]
         return "\n".join(lines)
     elif tool_name == "web_search":
         results = web.search(tool_input["query"])

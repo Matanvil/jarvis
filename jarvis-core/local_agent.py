@@ -17,6 +17,77 @@ from tools.rag import RAGTool
 from memory import ProjectMemory
 
 DPO_LOG_PATH = os.path.expanduser("~/.jarvis/logs/dpo_data.jsonl")
+_JARVIS_PROJECTS_BASE = os.path.expanduser("~/.jarvis/projects")
+
+
+def _plans_dir(cwd: str) -> str:
+    import hashlib
+    h = hashlib.md5(cwd.encode()).hexdigest()
+    return os.path.join(_JARVIS_PROJECTS_BASE, h, "plans")
+
+
+_PLAN_SKILL_PROMPT = """
+── PLANNING MODE ──────────────────────────────────────────────────────────────
+You are in planning mode. DO NOT execute or modify anything yet.
+
+Your job:
+1. Use read-only tools (file_read, list_dir, search_content, find_files, shell_run with read-only commands like ls/cat/git log) to understand the current state fully
+2. Identify every file, directory, command, or step the task requires
+3. Write the complete plan to: {plans_dir}/<filename>.md  using file_write
+   Filename format: YYYY-MM-DD-<short-slug>.md  (e.g. 2026-06-29-reorganise-core.md)
+4. Call finalize() with the full numbered plan AND the path it was saved to
+
+Plan file format:
+# Plan: <task title>
+Date: <today's date>
+Task: <one sentence description>
+
+## Steps
+1. <Specific action> — tool: <exact tool>, args: <exact args or command>
+2. ...
+
+## Notes
+<risks, dependencies, or anything that could go wrong>
+
+Rules:
+- Every step must name the exact tool and exact arguments — no "TBD" or vague descriptions
+- DO NOT call file_edit or any shell_run that modifies state (no mv, cp, mkdir, rm, git commit, etc.)
+- file_write is allowed ONLY for saving this plan file
+- After saving and calling finalize(), STOP — the user will confirm before execution starts
+──────────────────────────────────────────────────────────────────────────────
+"""
+
+_EXECUTE_SKILL_PROMPT = """
+── EXECUTION MODE ─────────────────────────────────────────────────────────────
+You are in execution mode. Execute the plan step by step using tools.
+
+Rules:
+- Execute exactly one step at a time with the appropriate tool
+- Every step MUST be backed by a tool call — never claim a step is done without tool output proving it
+- After each tool call, verify the output before proceeding — if it shows an error or unexpected result, call finalize() immediately with what failed and why; do NOT continue
+- Do NOT skip steps or reorder them
+- Only call finalize() with a success summary when EVERY step has been executed and verified with actual tool output
+──────────────────────────────────────────────────────────────────────────────
+"""
+
+_PROCEED_RE = re.compile(
+    r"^\s*(proceed|yes\b|go ahead|execute|implement|do it|ok\b|sure\b|start\b|let'?s go|sounds good|please proceed|yes please)",
+    re.IGNORECASE,
+)
+_NUMBERED_STEPS_RE = re.compile(r"^\s*\d+[\.\)]\s+\S", re.MULTILINE)
+
+
+def _detect_skill(intent_class: str | None, user_text: str, history: list | None) -> str | None:
+    """Return 'plan', 'execute', or None based on intent and history."""
+    if intent_class == "prepare":
+        return "plan"
+    if _PROCEED_RE.match(user_text.strip()):
+        for msg in reversed((history or [])[-6:]):
+            if msg.get("role") == "assistant":
+                content = msg.get("content") or ""
+                if len(_NUMBERED_STEPS_RE.findall(content)) >= 3:
+                    return "execute"
+    return None
 
 
 def _flush_dpo(record: dict) -> None:
@@ -440,6 +511,15 @@ class LocalAgent:
                 system_msg += f"\nActive project directory: {cwd}\n"
             if memory_context:
                 system_msg += f"\nProject memory: {memory_context}\n"
+
+        skill = _detect_skill(intent_class, user_text, history)
+        if skill == "plan":
+            proj_cwd = cwd or os.path.expanduser("~")
+            pdir = _plans_dir(proj_cwd)
+            os.makedirs(pdir, exist_ok=True)
+            system_msg += _PLAN_SKILL_PROMPT.format(plans_dir=pdir)
+        elif skill == "execute":
+            system_msg += _EXECUTE_SKILL_PROMPT
 
         max_steps = int(self._config.get("reasoning", {}).get("max_steps_local", 15))
 
