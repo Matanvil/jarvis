@@ -222,9 +222,12 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
                 if choice.get("finish_reason"):
                     finish_reason = choice["finish_reason"]
 
-                # Determine branch on first chunk that has content or tool_calls
+                # Determine branch: is_text governs HUD token streaming only.
+                # Tool-calls are always accumulated regardless — some backends
+                # (e.g. LM Studio mlx-engine) send content:"\n\n" before tool_calls
+                # in the same response, which would lock is_text=True and drop tools.
                 if is_text is None:
-                    if delta.get("content"):
+                    if delta.get("content") and delta["content"].strip():
                         is_text = True
                     elif delta.get("tool_calls"):
                         is_text = False
@@ -243,48 +246,38 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
                                 composing_state[0] = True
                                 step_callback({"type": "step", "label": "Composing response…", "tool": "text", "milestone": False})
                             step_callback({"type": "token", "text": token})
-                elif is_text is False:
-                    for tc_delta in delta.get("tool_calls", []):
-                        idx = tc_delta.get("index", 0)
-                        if idx not in accumulated:
-                            accumulated[idx] = {"id": "", "name": "", "arguments": ""}
-                        if tc_delta.get("id"):
-                            accumulated[idx]["id"] = tc_delta["id"]
-                        func = tc_delta.get("function", {})
-                        if func.get("name"):
-                            accumulated[idx]["name"] = func["name"]
-                        if func.get("arguments"):
-                            arg_chunk = func["arguments"]
-                            accumulated[idx]["arguments"] += arg_chunk
 
-                            # Stream finalize answer as decoded tokens so the HUD
-                            # shows the answer building up during generation.
-                            if step_callback and accumulated[idx].get("name") == "finalize":
-                                if idx not in _fin:
-                                    _fin[idx] = {"started": False, "pending": "",
-                                                 "in_escape": False, "done": False}
-                                fb = _fin[idx]
-                                if fb["done"]:
-                                    continue
-                                if not fb["started"]:
-                                    fb["pending"] += arg_chunk
-                                    m = _FINALIZE_ANSWER_RE.search(fb["pending"])
-                                    if m:
-                                        fb["started"] = True
-                                        if composing_state is not None and not composing_state[0]:
-                                            composing_state[0] = True
-                                            step_callback({"type": "step", "label": "Composing response…", "tool": "finalize", "milestone": False})
-                                        decoded, done = _decode_json_string_chunk(fb["pending"][m.end():], fb)
-                                        if decoded:
-                                            step_callback({"type": "token", "text": decoded})
-                                            _now = _time.monotonic()
-                                            if _t_first_token is None:
-                                                _t_first_token = _now
-                                            _token_count += 1
-                                            _t_last_token = _now
-                                        fb["done"] = done
-                                else:
-                                    decoded, done = _decode_json_string_chunk(arg_chunk, fb)
+                for tc_delta in delta.get("tool_calls", []):
+                    idx = tc_delta.get("index", 0)
+                    if idx not in accumulated:
+                        accumulated[idx] = {"id": "", "name": "", "arguments": ""}
+                    if tc_delta.get("id"):
+                        accumulated[idx]["id"] = tc_delta["id"]
+                    func = tc_delta.get("function", {})
+                    if func.get("name"):
+                        accumulated[idx]["name"] = func["name"]
+                    if func.get("arguments"):
+                        arg_chunk = func["arguments"]
+                        accumulated[idx]["arguments"] += arg_chunk
+
+                        # Stream finalize answer as decoded tokens so the HUD
+                        # shows the answer building up during generation.
+                        if step_callback and accumulated[idx].get("name") == "finalize":
+                            if idx not in _fin:
+                                _fin[idx] = {"started": False, "pending": "",
+                                             "in_escape": False, "done": False}
+                            fb = _fin[idx]
+                            if fb["done"]:
+                                continue
+                            if not fb["started"]:
+                                fb["pending"] += arg_chunk
+                                m = _FINALIZE_ANSWER_RE.search(fb["pending"])
+                                if m:
+                                    fb["started"] = True
+                                    if composing_state is not None and not composing_state[0]:
+                                        composing_state[0] = True
+                                        step_callback({"type": "step", "label": "Composing response…", "tool": "finalize", "milestone": False})
+                                    decoded, done = _decode_json_string_chunk(fb["pending"][m.end():], fb)
                                     if decoded:
                                         step_callback({"type": "token", "text": decoded})
                                         _now = _time.monotonic()
@@ -293,6 +286,16 @@ def _stream_call(client: "httpx.Client", url: str, payload: dict,
                                         _token_count += 1
                                         _t_last_token = _now
                                     fb["done"] = done
+                            else:
+                                decoded, done = _decode_json_string_chunk(arg_chunk, fb)
+                                if decoded:
+                                    step_callback({"type": "token", "text": decoded})
+                                    _now = _time.monotonic()
+                                    if _t_first_token is None:
+                                        _t_first_token = _now
+                                    _token_count += 1
+                                    _t_last_token = _now
+                                fb["done"] = done
 
         # Populate metrics (captured for both text and finalize paths)
         if metrics_out is not None and _token_count > 0:
