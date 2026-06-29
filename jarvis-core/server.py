@@ -96,6 +96,10 @@ def _ensure_executor_server_running(config: dict) -> None:
     except Exception:
         pass  # not running — start it
 
+    if local_cfg.get("executor_external"):
+        logging.warning("[Jarvis] executor_external=true — LM Studio not running at %s; start it manually", executor_host)
+        return
+
     from urllib.parse import urlparse
     parsed = urlparse(executor_host)
     port = parsed.port or 8093
@@ -114,6 +118,7 @@ def _ensure_executor_server_running(config: dict) -> None:
             "--model", executor_model,
             "--port", str(port),
             "--max-tokens", max_tokens,
+            "--no-memory-aware-cache",
         ]
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         logging.info("[Jarvis] vllm_mlx executor started: model=%s port=%d", executor_model, port)
@@ -215,6 +220,18 @@ app = FastAPI(lifespan=lifespan)
 # set — a manually-run dev server (or the test client) stays open.
 _AUTH_TOKEN = os.environ.get("JARVIS_AUTH_TOKEN", "")
 _AUTH_EXEMPT_PATHS = {"/health", "/commands/abort"}
+
+_TOKEN_FILE = os.path.expanduser("~/.jarvis/auth_token")
+if _AUTH_TOKEN:
+    try:
+        os.makedirs(os.path.dirname(_TOKEN_FILE), exist_ok=True)
+        with open(_TOKEN_FILE, "w") as _f:
+            _f.write(_AUTH_TOKEN)
+        os.chmod(_TOKEN_FILE, 0o600)
+    except Exception:
+        pass
+elif os.path.exists(_TOKEN_FILE):
+    os.remove(_TOKEN_FILE)
 
 
 @app.middleware("http")
